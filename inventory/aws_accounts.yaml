@@ -1,0 +1,20 @@
+# AWS account definitions — maintained manually.
+# Used by the static_yaml adapter to populate CloudAccount entities.
+# For accounts discovered automatically via AWS Organizations, use the aws_orgs adapter.
+
+accounts:
+  - id: "123456789012"
+    name: prod-platform
+    environment: prod
+    ou_path: /root/workloads/prod
+    owning_team: platform-engineering
+    tags:
+      cost-center: "1234"
+      managed-by: gitventory
+
+  - id: "999888777666"
+    name: dev-sandbox
+    environment: dev
+    owning_team: platform-engineering
+    tags:
+      cost-center: "1234"

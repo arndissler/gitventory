@@ -1,0 +1,15 @@
+# Team definitions — the stable ownership anchor for repositories and cloud accounts.
+# Team IDs must be stable slugs; they are used as foreign keys in deployment_mappings.yaml.
+
+teams:
+  - id: platform-engineering
+    display_name: Platform Engineering
+    email: platform@example.com
+    slack_channel: "#platform-eng"
+    github_team_slug: platform-engineering
+
+  - id: data-infra
+    display_name: Data Infrastructure
+    email: data-infra@example.com
+    slack_channel: "#data-infra"
+    github_team_slug: data-infrastructure

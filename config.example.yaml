@@ -1,0 +1,37 @@
+# gitventory configuration — copy to config.yaml and fill in your values.
+version: "1"
+
+store:
+  backend: sqlite                  # "sqlite" | "json" | "postgres"
+  sqlite:
+    path: "./data/gitventory.db"
+  # postgres:                      # Uncomment to switch to PostgreSQL
+  #   url: "postgresql://user:pass@localhost:5432/gitventory"
+
+adapters:
+  github:
+    enabled: true
+    token: "${GITHUB_TOKEN}"       # Set GITHUB_TOKEN in your environment
+    orgs:
+      - my-org
+      # - my-other-org
+    include_archived: false
+    collect_ghas_alerts: true
+    collect_secret_scanning: true
+    collect_dependabot: true
+    parse_workflows: true          # Auto-detect repo→AWS links via OIDC role ARNs
+    rate_limit_sleep_seconds: 1.0
+
+  static_yaml:
+    enabled: true
+    teams_file: "./inventory/teams.yaml"
+    aws_accounts_file: "./inventory/aws_accounts.yaml"
+    deployment_mappings_file: "./inventory/deployment_mappings.yaml"
+
+logging:
+  level: INFO                      # DEBUG | INFO | WARNING | ERROR
+  format: text                     # "text" | "json"
+
+output:
+  default_format: table            # "table" | "json"
+  date_format: "%Y-%m-%d"
