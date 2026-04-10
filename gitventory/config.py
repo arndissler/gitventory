@@ -10,6 +10,10 @@ from typing import Any, Optional
 import yaml
 from pydantic import BaseModel, field_validator, model_validator
 
+from gitventory.adapters.base import AdapterConfig as AdapterConfig  # noqa: F401 — re-exported
+from gitventory.adapters.github.adapter import GitHubAdapterConfig  # noqa: F401 — re-exported
+from gitventory.adapters.static_yaml.adapter import StaticYamlAdapterConfig  # noqa: F401 — re-exported
+
 # ---------------------------------------------------------------------------
 # Store config
 # ---------------------------------------------------------------------------
@@ -44,28 +48,6 @@ class StoreConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Adapter configs
 # ---------------------------------------------------------------------------
-
-class AdapterConfig(BaseModel):
-    enabled: bool = True
-
-
-class GitHubAdapterConfig(AdapterConfig):
-    token: str = ""
-    orgs: list[str] = []
-    include_archived: bool = False
-    collect_ghas_alerts: bool = True
-    collect_secret_scanning: bool = True
-    collect_dependabot: bool = True
-    parse_workflows: bool = True
-    rate_limit_sleep_seconds: float = 1.0
-    per_page: int = 100
-
-
-class StaticYamlAdapterConfig(AdapterConfig):
-    teams_file: Optional[str] = None
-    aws_accounts_file: Optional[str] = None
-    deployment_mappings_file: Optional[str] = None
-
 
 class AdaptersConfig(BaseModel):
     github: Optional[GitHubAdapterConfig] = None

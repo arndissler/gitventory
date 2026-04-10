@@ -53,7 +53,7 @@ adapters:
     assert config.version == "1"
     assert config.store.backend == "sqlite"
     assert config.adapters.github is not None
-    assert config.adapters.github.token == "ghp_test"
+    assert config.adapters.github.auth.token == "ghp_test"
     assert config.adapters.github.orgs == ["test-org"]
     assert config.adapters.static_yaml is not None
 

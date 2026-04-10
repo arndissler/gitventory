@@ -68,12 +68,22 @@ class GitHubClient:
                 auth.installation_ids[org], org,
             )
         else:
-            # Auto-discover the installation for this org
-            installation = gi.get_org_installation(org)
-            logger.debug(
-                "GitHub App: discovered installation %d for org %r",
-                installation.id, org,
-            )
+            # Auto-discover the installation — try org first, fall back to
+            # personal account (user installation) if the name is not an org.
+            try:
+                installation = gi.get_org_installation(org)
+                logger.debug(
+                    "GitHub App: discovered org installation %d for %r",
+                    installation.id, org,
+                )
+            except GithubException as e:
+                if e.status != 404:
+                    raise
+                installation = gi.get_user_installation(org)
+                logger.debug(
+                    "GitHub App: discovered user installation %d for %r",
+                    installation.id, org,
+                )
 
         # get_github_for_installation() uses Auth.AppInstallationAuth which
         # transparently refreshes the 1-hour token before it expires.
@@ -85,15 +95,20 @@ class GitHubClient:
     # ------------------------------------------------------------------
 
     def list_repos(self, org: str, include_archived: bool = False) -> Iterator[GHRepository]:
-        """Yield all repositories in an organisation."""
+        """Yield all repositories for an organisation or personal account."""
         gh = self._get_gh(org)
         try:
-            organisation = gh.get_organization(org)
+            owner = gh.get_organization(org)
+            logger.debug("Scanning GitHub organisation: %s", org)
         except GithubException as e:
-            logger.error("Failed to fetch organisation %r: %s", org, e)
-            return
+            if e.status != 404:
+                logger.error("Failed to fetch organisation %r: %s", org, e)
+                return
+            # Not an organisation — treat as a personal account
+            owner = gh.get_user(org)
+            logger.debug("Scanning GitHub personal account: %s", org)
 
-        for repo in organisation.get_repos(type="all"):
+        for repo in owner.get_repos(type="all"):
             if repo.archived and not include_archived:
                 logger.debug("Skipping archived repo: %s", repo.full_name)
                 continue
