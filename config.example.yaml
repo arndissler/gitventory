@@ -11,10 +11,57 @@ store:
 adapters:
   github:
     enabled: true
-    token: "${GITHUB_TOKEN}"       # Set GITHUB_TOKEN in your environment
+
+    # -------------------------------------------------------------------------
+    # Auth mode 1: GitHub App  (recommended for enterprise)
+    # -------------------------------------------------------------------------
+    # One App registration covers all organisations.  Each org gets a separate
+    # short-lived installation token (1 h TTL) generated automatically at runtime.
+    #
+    # Setup:
+    #   1. Register a GitHub App at github.com/settings/apps (or your org's settings)
+    #   2. Grant it: Contents = Read, Security events = Read, Metadata = Read
+    #   3. Install the App into each target organisation (org admins must approve)
+    #   4. Download the App's private key (.pem file)
+    #   5. Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_FILE in your environment
+    #
+    auth:
+      type: app
+      app_id: "${GITHUB_APP_ID}"
+      private_key_file: "${GITHUB_APP_PRIVATE_KEY_FILE}"
+      #
+      # Alternative: inline PEM (useful when injecting from a secrets manager)
+      # private_key: "${GITHUB_APP_PRIVATE_KEY}"
+      #
+      # Optional: pin installation IDs to skip one API call per org.
+      # If omitted, gitventory auto-discovers each org's installation.
+      # installation_ids:
+      #   my-org-1: 12345678
+      #   my-org-2: 87654321
+
+    # -------------------------------------------------------------------------
+    # Auth mode 2: Per-org PATs  (better than global, not ideal)
+    # -------------------------------------------------------------------------
+    # Each organisation uses its own token.  A leaked token only affects
+    # a single org.  Tokens are still user-bound and require manual rotation.
+    #
+    # auth:
+    #   type: token_per_org
+    #   org_tokens:
+    #     my-org-1: "${GITHUB_TOKEN_ORG1}"
+    #     my-org-2: "${GITHUB_TOKEN_ORG2}"
+
+    # -------------------------------------------------------------------------
+    # Auth mode 3: Single global PAT  (simple / local / single-org use only)
+    # -------------------------------------------------------------------------
+    # auth:
+    #   type: token
+    #   token: "${GITHUB_TOKEN}"
+
     orgs:
-      - my-org
-      # - my-other-org
+      - my-org-1
+      # - my-org-2
+
     include_archived: false
     collect_ghas_alerts: true
     collect_secret_scanning: true

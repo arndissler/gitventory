@@ -97,11 +97,14 @@ store:
 adapters:
   github:
     enabled: true
-    token: "${GITHUB_TOKEN}"
+    auth:
+      type: app                                        # recommended for enterprise
+      app_id: "${GITHUB_APP_ID}"
+      private_key_file: "${GITHUB_APP_PRIVATE_KEY_FILE}"
     orgs:
       - my-org
     collect_ghas_alerts: true
-    parse_workflows: true       # auto-detect OIDC repo→AWS links
+    parse_workflows: true                              # auto-detect OIDC repo→AWS links
 
   static_yaml:
     enabled: true
@@ -110,7 +113,66 @@ adapters:
     deployment_mappings_file: "./inventory/deployment_mappings.yaml"
 ```
 
-See [`config.example.yaml`](config.example.yaml) for the full reference.
+See [`config.example.yaml`](config.example.yaml) for the full reference including all three auth modes.
+
+### GitHub authentication modes
+
+gitventory supports three auth modes for the GitHub adapter, selected via `auth.type`:
+
+| Mode | `auth.type` | Recommended for |
+|---|---|---|
+| **GitHub App** | `app` | Enterprise — multiple orgs, no user dependency |
+| Per-org PATs | `token_per_org` | Teams without GitHub App access |
+| Global PAT | `token` | Local use, single-org setups |
+
+#### Setting up a GitHub App (recommended)
+
+1. Go to **Settings → Developer settings → GitHub Apps → New GitHub App**
+   (or your organisation's settings for an org-owned App)
+2. Set a name, disable the webhook, and grant these **repository permissions**:
+   - Contents: Read
+   - Metadata: Read
+   - Security events: Read (for GHAS alerts)
+3. Save and note the **App ID** shown at the top of the App settings page
+4. Scroll to **Private keys** and click **Generate a private key** — save the `.pem` file
+5. Install the App into each target organisation (**Install App** tab → select orgs)
+6. Set environment variables:
+   ```bash
+   export GITHUB_APP_ID=123456
+   export GITHUB_APP_PRIVATE_KEY_FILE=/path/to/private-key.pem
+   ```
+
+gitventory auto-discovers the installation ID for each org in `orgs:`. Optionally pin them under `auth.installation_ids` to skip the discovery API call.
+
+#### Setting up per-org PATs (`token_per_org`)
+
+Use **fine-grained personal access tokens** (not classic PATs) — they can be scoped to a single organisation and specific repositories.
+
+Create one token per org at **Settings → Developer settings → Personal access tokens → Fine-grained tokens**:
+
+| Permission | Level | Required for |
+|---|---|---|
+| **Contents** | Read | Listing repos, reading workflow files (OIDC detection) |
+| **Metadata** | Read | Repo metadata — always required by the API |
+| **Secret scanning alerts** | Read | `collect_secret_scanning: true` |
+| **Code scanning alerts** | Read | `collect_ghas_alerts: true` |
+
+Dependabot alerts use the **Dependabot alerts** permission (Read).  
+If you only need repo metadata and OIDC mapping detection, Contents + Metadata is sufficient.
+
+Set **Resource owner** to the target organisation and restrict **Repository access** to the repositories gitventory needs to scan, or select _All repositories_ for full org coverage.
+
+#### Setting up a global PAT (`token`)
+
+Same permissions as per-org PATs above. If using a classic PAT, the required OAuth scopes are:
+
+| Scope | Required for |
+|---|---|
+| `repo` | Private repo access (read) |
+| `read:org` | Listing org repositories |
+| `security_events` | GHAS alerts (secret scanning, code scanning, Dependabot) |
+
+Classic PATs cannot be scoped to a single org — a leaked token grants access to everything the owning user can reach. Prefer fine-grained PATs or GitHub Apps.
 
 ### Static inventory files
 

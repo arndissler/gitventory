@@ -6,24 +6,89 @@ import logging
 import time
 from typing import Iterator
 
-from github import Auth, Github, GithubException
+from github import Auth, Github, GithubException, GithubIntegration
 from github.Repository import Repository as GHRepository
+
+from gitventory.adapters.github.auth import AppAuthConfig, TokenAuthConfig, TokenPerOrgConfig
 
 logger = logging.getLogger(__name__)
 
 
 class GitHubClient:
-    """Wraps PyGithub with rate-limit awareness."""
+    """Wraps PyGithub with multi-mode auth and rate-limit awareness.
 
-    def __init__(self, token: str, rate_limit_sleep: float = 1.0) -> None:
-        auth = Auth.Token(token)
-        self._gh = Github(auth=auth, per_page=100)
+    A separate ``Github`` instance is created per organisation so that each
+    org uses the correct scoped credential:
+
+    - App auth:          per-org installation token (1 h TTL, auto-refreshed)
+    - token_per_org:     per-org PAT
+    - token (global):    same ``Github`` instance reused for every org
+    """
+
+    def __init__(self, auth_config, rate_limit_sleep: float = 1.0) -> None:
+        self._auth = auth_config
         self._rate_limit_sleep = rate_limit_sleep
+        self._org_clients: dict[str, Github] = {}
+
+    # ------------------------------------------------------------------
+    # Per-org Github instance factory
+    # ------------------------------------------------------------------
+
+    def _get_gh(self, org: str) -> Github:
+        """Return a cached ``Github`` instance for *org*, creating it if needed."""
+        if org not in self._org_clients:
+            self._org_clients[org] = self._build_gh(org)
+        return self._org_clients[org]
+
+    def _build_gh(self, org: str) -> Github:
+        """Construct the right ``Github`` client for the given org and auth mode."""
+        auth = self._auth
+
+        if isinstance(auth, AppAuthConfig):
+            return self._build_gh_app(org, auth)
+
+        if isinstance(auth, TokenPerOrgConfig):
+            token = auth.token_for(org)  # raises KeyError with a clear message if missing
+            return Github(auth=Auth.Token(token), per_page=100)
+
+        # TokenAuthConfig — global token, same client for every org
+        return Github(auth=Auth.Token(auth.token), per_page=100)
+
+    def _build_gh_app(self, org: str, auth: AppAuthConfig) -> Github:
+        """Generate a per-org installation token for a GitHub App."""
+        private_key = auth.resolve_private_key()
+        app_auth = Auth.AppAuth(auth.app_id, private_key)
+        gi = GithubIntegration(auth=app_auth)
+
+        if org in auth.installation_ids:
+            # Use the pinned installation ID — skips one API call
+            installation = gi.get_installation(auth.installation_ids[org])
+            logger.debug(
+                "GitHub App: using pinned installation %d for org %r",
+                auth.installation_ids[org], org,
+            )
+        else:
+            # Auto-discover the installation for this org
+            installation = gi.get_org_installation(org)
+            logger.debug(
+                "GitHub App: discovered installation %d for org %r",
+                installation.id, org,
+            )
+
+        # get_github_for_installation() uses Auth.AppInstallationAuth which
+        # transparently refreshes the 1-hour token before it expires.
+        return installation.get_github_for_installation()
+
+    # ------------------------------------------------------------------
+    # API methods (unchanged — they receive GHRepository objects that are
+    # already bound to the correct Github instance from _build_gh)
+    # ------------------------------------------------------------------
 
     def list_repos(self, org: str, include_archived: bool = False) -> Iterator[GHRepository]:
         """Yield all repositories in an organisation."""
+        gh = self._get_gh(org)
         try:
-            organisation = self._gh.get_organization(org)
+            organisation = gh.get_organization(org)
         except GithubException as e:
             logger.error("Failed to fetch organisation %r: %s", org, e)
             return
@@ -62,9 +127,6 @@ class GitHubClient:
             return list(repo.get_secret_scanning_alerts())
         except GithubException as e:
             if e.status in (403, 404, 422):
-                # 403: GHAS not enabled or no permission
-                # 404: repo not found
-                # 422: GHAS not available on this plan
                 logger.debug(
                     "Secret scanning not available for %s: %s", repo.full_name, e.data
                 )
@@ -100,4 +162,6 @@ class GitHubClient:
             time.sleep(self._rate_limit_sleep)
 
     def close(self) -> None:
-        self._gh.close()
+        for gh in self._org_clients.values():
+            gh.close()
+        self._org_clients.clear()
