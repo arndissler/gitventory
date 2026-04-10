@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 
 def build_repo_filters(
+    repo: Optional[str] = None,
     org: Optional[str] = None,
     provider: Optional[str] = None,
     team: Optional[str] = None,
@@ -17,6 +18,13 @@ def build_repo_filters(
 ) -> dict[str, Any]:
     """Build a filter dict for Repository queries from CLI options."""
     filters: dict[str, Any] = {}
+
+    if repo:
+        # Accept stable ID (github:NNN) or full_name (org/repo)
+        if repo.startswith("github:"):
+            filters["id"] = repo
+        else:
+            filters["full_name"] = repo
 
     if org:
         filters["org"] = org

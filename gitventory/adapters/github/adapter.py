@@ -139,51 +139,66 @@ class GitHubAdapter(AbstractAdapter):
         finally:
             self._client.close()
 
+    def collect_one(self, full_name: str) -> Iterator[InventoryEntity]:
+        """Collect a single repository by its ``org/name`` full name."""
+        cfg: GitHubAdapterConfig = self.config  # type: ignore[assignment]
+        self._client = GitHubClient(
+            auth_config=cfg.auth,
+            rate_limit_sleep=cfg.rate_limit_sleep_seconds,
+        )
+        try:
+            logger.info("GitHub adapter: collecting single repo %r", full_name)
+            gh_repo = self._client.get_repo(full_name)
+            yield from self._collect_repo(gh_repo)
+        finally:
+            self._client.close()
+
     # ------------------------------------------------------------------
-    # Per-organisation collection
+    # Per-organisation / per-repository collection
     # ------------------------------------------------------------------
 
     def _collect_org(self, org: str) -> Iterator[InventoryEntity]:
         cfg: GitHubAdapterConfig = self.config  # type: ignore[assignment]
+        for gh_repo in self._client.list_repos(org, include_archived=cfg.include_archived):
+            yield from self._collect_repo(gh_repo)
 
-        for gh_repo in self._client.list_repos(
-            org, include_archived=cfg.include_archived
-        ):
-            repo_id = f"github:{gh_repo.id}"
-            logger.debug("Processing repo: %s", gh_repo.full_name)
+    def _collect_repo(self, gh_repo) -> Iterator[InventoryEntity]:  # type: ignore[no-untyped-def]
+        cfg: GitHubAdapterConfig = self.config  # type: ignore[assignment]
+        repo_id = f"github:{gh_repo.id}"
+        logger.debug("Processing repo: %s", gh_repo.full_name)
 
-            secret_alerts = []
-            code_alerts = []
-            dependabot_alerts = []
+        secret_alerts = []
+        code_alerts = []
+        dependabot_alerts = []
 
+        if cfg.collect_ghas_alerts:
+            if cfg.collect_secret_scanning:
+                secret_alerts = self._client.get_secret_scanning_alerts(gh_repo)
             if cfg.collect_ghas_alerts:
-                if cfg.collect_secret_scanning:
-                    secret_alerts = self._client.get_secret_scanning_alerts(gh_repo)
-                if cfg.collect_ghas_alerts:
-                    code_alerts = self._client.get_code_scanning_alerts(gh_repo)
-                if cfg.collect_dependabot:
-                    dependabot_alerts = self._client.get_dependabot_alerts(gh_repo)
+                code_alerts = self._client.get_code_scanning_alerts(gh_repo)
+            if cfg.collect_dependabot:
+                dependabot_alerts = self._client.get_dependabot_alerts(gh_repo)
 
-            open_secret = sum(1 for a in secret_alerts if a.state == "open")
-            open_code = sum(1 for a in code_alerts if getattr(a, "state", None) == "open")
-            open_dependabot = sum(1 for a in dependabot_alerts if getattr(a, "state", None) == "open")
+        open_secret = sum(1 for a in secret_alerts if a.state == "open")
+        open_code = sum(1 for a in code_alerts if getattr(a, "state", None) == "open")
+        open_dependabot = sum(1 for a in dependabot_alerts if getattr(a, "state", None) == "open")
 
-            yield repo_to_entity(
-                gh_repo,
-                collected_at=self._collected_at,
-                open_secret_alerts=open_secret,
-                open_code_scanning_alerts=open_code,
-                open_dependabot_alerts=open_dependabot,
+        yield repo_to_entity(
+            gh_repo,
+            collected_at=self._collected_at,
+            open_secret_alerts=open_secret,
+            open_code_scanning_alerts=open_code,
+            open_dependabot_alerts=open_dependabot,
+        )
+
+        for alert in secret_alerts:
+            yield secret_alert_to_entity(alert, repo_id, self._collected_at)
+        for alert in code_alerts:
+            yield code_scanning_alert_to_entity(alert, repo_id, self._collected_at)
+        for alert in dependabot_alerts:
+            yield dependabot_alert_to_entity(alert, repo_id, self._collected_at)
+
+        if cfg.parse_workflows:
+            yield from parse_workflows(
+                gh_repo, repo_id, self._collected_at, self._client
             )
-
-            for alert in secret_alerts:
-                yield secret_alert_to_entity(alert, repo_id, self._collected_at)
-            for alert in code_alerts:
-                yield code_scanning_alert_to_entity(alert, repo_id, self._collected_at)
-            for alert in dependabot_alerts:
-                yield dependabot_alert_to_entity(alert, repo_id, self._collected_at)
-
-            if cfg.parse_workflows:
-                yield from parse_workflows(
-                    gh_repo, repo_id, self._collected_at, self._client
-                )

@@ -26,6 +26,7 @@ class CollectionRunner:
         adapter_names: Optional[list[str]] = None,
         dry_run: bool = False,
         validate: bool = True,
+        repo: Optional[str] = None,
     ) -> dict[str, int]:
         """
         Run enabled adapters and return a map of ``{adapter_name: entity_count}``.
@@ -40,6 +41,9 @@ class CollectionRunner:
             if the write had happened.
         validate:
             Call ``adapter.validate_connectivity()`` before collecting.
+        repo:
+            If given, collect only this repository (``org/name`` full name).
+            Adapters that do not support single-repo collection are skipped.
         """
         # Ensure all adapter modules are imported (triggers @register_adapter)
         import gitventory.adapters  # noqa: F401
@@ -58,17 +62,31 @@ class CollectionRunner:
                 continue
 
             adapter: AbstractAdapter = adapter_cls(adapter_cfg)
+
+            if repo and not hasattr(adapter, "collect_one"):
+                logger.debug(
+                    "Adapter %r does not support single-repo collection; skipping.", name
+                )
+                continue
+
             started_at = datetime.now(timezone.utc)
-            logger.info("Starting adapter: %s%s", name, " (dry-run)" if dry_run else "")
+            logger.info(
+                "Starting adapter: %s%s%s",
+                name,
+                f" (repo={repo!r})" if repo else "",
+                " (dry-run)" if dry_run else "",
+            )
 
             try:
                 if validate and not adapter.validate_connectivity():
                     raise RuntimeError(f"Connectivity check failed for adapter {name!r}")
 
+                entity_iter = adapter.collect_one(repo) if repo else adapter.collect()  # type: ignore[attr-defined]
+
                 if dry_run:
-                    count = sum(1 for _ in adapter.collect())
+                    count = sum(1 for _ in entity_iter)
                 else:
-                    count = self.store.upsert_many(adapter.collect())
+                    count = self.store.upsert_many(entity_iter)
 
                 finished_at = datetime.now(timezone.utc)
                 elapsed = (finished_at - started_at).total_seconds()

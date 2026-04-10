@@ -224,6 +224,11 @@ gitventory collect
 gitventory collect -a static_yaml
 gitventory collect -a github
 
+# Collect a single repository — fetch only that repo, its GHAS alerts,
+# and any OIDC workflow mappings, then upsert into the store
+gitventory collect --repo my-org/my-repo
+gitventory collect --repo my-org/my-repo --dry-run -v
+
 # Dry run — show what would be collected without writing to the store
 gitventory collect --dry-run -v
 ```
@@ -233,6 +238,10 @@ gitventory collect --dry-run -v
 ```bash
 # All repositories (table view)
 gitventory query repos
+
+# A single repository by full name or stable ID
+gitventory query repos --repo my-org/my-repo
+gitventory query repos --repo github:12345678 -o json
 
 # Repos not pushed to in 90+ days with open GHAS alerts
 gitventory query repos --stale-days 90 --has-alerts
@@ -246,6 +255,8 @@ gitventory query repos --org my-org --no-archived -o json
 # Generic filter: repos with >0 secret alerts
 gitventory query repos -f "open_secret_alerts>0"
 ```
+
+> **Tip:** `gitventory show repo my-org/my-repo` shows the full detail view for a single repository (all fields, no column filtering). `query repos --repo` returns the same condensed table row as a regular list query, which is easier to pipe or export as JSON.
 
 ### Query cloud accounts
 

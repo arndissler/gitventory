@@ -45,6 +45,7 @@ def main(ctx: click.Context, config: str) -> None:
 
 @main.command()
 @click.option("-a", "--adapter", "adapters", multiple=True, help="Run only this adapter (repeatable).")
+@click.option("--repo", default=None, help="Collect only this repository (org/name or github:NNN).")
 @click.option("--dry-run", is_flag=True, help="Collect but do not write to store.")
 @click.option("--no-validate", is_flag=True, help="Skip connectivity pre-check.")
 @click.option("-v", "--verbose", is_flag=True, help="Enable DEBUG logging.")
@@ -52,6 +53,7 @@ def main(ctx: click.Context, config: str) -> None:
 def collect(
     ctx: click.Context,
     adapters: tuple[str, ...],
+    repo: Optional[str],
     dry_run: bool,
     no_validate: bool,
     verbose: bool,
@@ -65,6 +67,7 @@ def collect(
         runner = CollectionRunner(config, store)
         results = runner.run(
             adapter_names=list(adapters) or None,
+            repo=repo,
             dry_run=dry_run,
             validate=not no_validate,
         )
@@ -89,6 +92,7 @@ def query() -> None:
 
 
 @query.command("repos")
+@click.option("--repo", default=None, help="Filter by repository full_name (org/name) or stable ID (github:NNN).")
 @click.option("--provider", default=None, help="Filter by provider (github, azuredevops).")
 @click.option("--org", default=None, help="Filter by organisation.")
 @click.option("--team", default=None, help="Filter by owning team slug.")
@@ -101,6 +105,7 @@ def query() -> None:
 @click.pass_context
 def query_repos(
     ctx: click.Context,
+    repo: Optional[str],
     provider: Optional[str],
     org: Optional[str],
     team: Optional[str],
@@ -117,6 +122,7 @@ def query_repos(
 
     config = _load_config(ctx)
     filters = build_repo_filters(
+        repo=repo,
         org=org,
         provider=provider,
         team=team,

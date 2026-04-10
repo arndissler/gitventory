@@ -115,6 +115,12 @@ class GitHubClient:
             self._maybe_sleep()
             yield repo
 
+    def get_repo(self, full_name: str) -> GHRepository:
+        """Fetch a single repository by its ``org/name`` full name."""
+        org = full_name.split("/")[0]
+        gh = self._get_gh(org)
+        return gh.get_repo(full_name)
+
     def get_repo_contents(self, repo: GHRepository, path: str) -> list | None:
         """Return directory listing or None if path doesn't exist."""
         try:

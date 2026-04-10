@@ -102,3 +102,35 @@ def test_list_repos_includes_archived_when_requested(MockGithub):
     client = _make_client()
     repos = list(client.list_repos("my-org", include_archived=True))
     assert len(repos) == 2
+
+
+# ---------------------------------------------------------------------------
+# get_repo — single repository fetch
+# ---------------------------------------------------------------------------
+
+@patch("gitventory.adapters.github.client.Github")
+def test_get_repo_uses_org_for_auth(MockGithub):
+    fake_repo = _make_repo("my-repo")
+    mock_gh = MockGithub.return_value
+    mock_gh.get_repo.return_value = fake_repo
+
+    client = _make_client()
+    result = client.get_repo("my-org/my-repo")
+
+    mock_gh.get_repo.assert_called_once_with("my-org/my-repo")
+    assert result is fake_repo
+
+
+@patch("gitventory.adapters.github.client.Github")
+def test_get_repo_extracts_org_from_full_name(MockGithub):
+    """The org segment of full_name drives which Github instance is used."""
+    fake_repo = _make_repo("tool")
+    mock_gh = MockGithub.return_value
+    mock_gh.get_repo.return_value = fake_repo
+
+    client = _make_client()
+    client.get_repo("acme-corp/tool")
+
+    # Only one Github instance should have been created (for "acme-corp")
+    assert len(client._org_clients) == 1
+    assert "acme-corp" in client._org_clients
