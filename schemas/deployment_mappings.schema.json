@@ -1,0 +1,77 @@
+{
+  "$defs": {
+    "MappingEntry": {
+      "properties": {
+        "repo": {
+          "title": "Repo",
+          "type": "string"
+        },
+        "target_type": {
+          "default": "cloud_account",
+          "title": "Target Type",
+          "type": "string"
+        },
+        "target_id": {
+          "title": "Target Id",
+          "type": "string"
+        },
+        "deploy_method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Deploy Method"
+        },
+        "environment": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Environment"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        }
+      },
+      "required": [
+        "repo",
+        "target_id"
+      ],
+      "title": "MappingEntry",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "mappings": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/MappingEntry"
+      },
+      "title": "Mappings",
+      "type": "array"
+    }
+  },
+  "title": "DeploymentMappingsFile",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Schema for inventory/deployment_mappings.yaml \u2014 manual repo\u2192cloud account mappings."
+}

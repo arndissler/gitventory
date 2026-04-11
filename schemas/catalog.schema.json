@@ -1,0 +1,305 @@
+{
+  "$defs": {
+    "AccountFieldMatcher": {
+      "description": "Match cloud accounts by a direct field value (e.g. ``environment: prod``).\n\nAllowed fields: ``environment``, ``provider``, ``name``.",
+      "properties": {
+        "environment": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Environment"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        }
+      },
+      "title": "AccountFieldMatcher",
+      "type": "object"
+    },
+    "AccountIdMatcher": {
+      "description": "Match a cloud account by its stable ID (e.g. ``aws:123456789012``).",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "AccountIdMatcher",
+      "type": "object"
+    },
+    "AccountTagsMatcher": {
+      "description": "Match cloud accounts that have ALL of the specified tag key-value pairs.",
+      "properties": {
+        "tags": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "object"
+        }
+      },
+      "required": [
+        "tags"
+      ],
+      "title": "AccountTagsMatcher",
+      "type": "object"
+    },
+    "CatalogContent": {
+      "properties": {
+        "entity_types": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EntityTypeEntry"
+          },
+          "title": "Entity Types",
+          "type": "array"
+        },
+        "entities": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/CatalogEntityEntry"
+          },
+          "title": "Entities",
+          "type": "array"
+        }
+      },
+      "title": "CatalogContent",
+      "type": "object"
+    },
+    "CatalogEntityEntry": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "display_name": {
+          "default": "",
+          "title": "Display Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "owning_team": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owning Team"
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": true,
+          "default": {},
+          "title": "Properties"
+        },
+        "matchers": {
+          "$ref": "#/$defs/MatchersEntry",
+          "default": {
+            "repos": [],
+            "accounts": []
+          }
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "CatalogEntityEntry",
+      "type": "object"
+    },
+    "EntityTypeEntry": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "display_name": {
+          "default": "",
+          "title": "Display Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "EntityTypeEntry",
+      "type": "object"
+    },
+    "FullNameMatcher": {
+      "description": "Match repositories by ``full_name`` (exact or fnmatch glob).",
+      "properties": {
+        "full_name": {
+          "title": "Full Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "full_name"
+      ],
+      "title": "FullNameMatcher",
+      "type": "object"
+    },
+    "GithubPropertyMatcher": {
+      "description": "Match repositories by a GitHub custom property value.",
+      "properties": {
+        "github_property": {
+          "$ref": "#/$defs/_PropertyRule"
+        }
+      },
+      "required": [
+        "github_property"
+      ],
+      "title": "GithubPropertyMatcher",
+      "type": "object"
+    },
+    "MatchersEntry": {
+      "properties": {
+        "repos": {
+          "default": [],
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FullNameMatcher"
+              },
+              {
+                "$ref": "#/$defs/TopicsMatcher"
+              },
+              {
+                "$ref": "#/$defs/GithubPropertyMatcher"
+              }
+            ]
+          },
+          "title": "Repos",
+          "type": "array"
+        },
+        "accounts": {
+          "default": [],
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AccountIdMatcher"
+              },
+              {
+                "$ref": "#/$defs/AccountTagsMatcher"
+              },
+              {
+                "$ref": "#/$defs/AccountFieldMatcher"
+              }
+            ]
+          },
+          "title": "Accounts",
+          "type": "array"
+        }
+      },
+      "title": "MatchersEntry",
+      "type": "object"
+    },
+    "TopicsMatcher": {
+      "description": "Match repositories that have ANY of the listed topics.",
+      "properties": {
+        "topics": {
+          "$ref": "#/$defs/_TopicsRule"
+        }
+      },
+      "required": [
+        "topics"
+      ],
+      "title": "TopicsMatcher",
+      "type": "object"
+    },
+    "_PropertyRule": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "_PropertyRule",
+      "type": "object"
+    },
+    "_TopicsRule": {
+      "properties": {
+        "any": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Any",
+          "type": "array"
+        }
+      },
+      "title": "_TopicsRule",
+      "type": "object"
+    }
+  },
+  "description": "Root schema for ``catalog.yaml``.",
+  "properties": {
+    "catalog": {
+      "$ref": "#/$defs/CatalogContent",
+      "default": {
+        "entity_types": [],
+        "entities": []
+      }
+    }
+  },
+  "title": "CatalogFile",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,421 @@
+{
+  "$defs": {
+    "AdaptersConfig": {
+      "properties": {
+        "github": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GitHubAdapterConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "static_yaml": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StaticYamlAdapterConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "AdaptersConfig",
+      "type": "object"
+    },
+    "AppAuthConfig": {
+      "description": "GitHub App authentication.\n\nRegister a GitHub App once, then install it into each target organisation.\ngitventory uses the single ``app_id`` + private key to authenticate as the\nApp, then generates a per-org installation token scoped only to that org.\n\nPrivate key precedence: ``private_key`` (inline) > ``private_key_file`` (path).",
+      "properties": {
+        "type": {
+          "const": "app",
+          "default": "app",
+          "title": "Type",
+          "type": "string"
+        },
+        "app_id": {
+          "title": "App Id",
+          "type": "integer"
+        },
+        "private_key_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Private Key File"
+        },
+        "private_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Private Key"
+        },
+        "installation_ids": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "default": {},
+          "title": "Installation Ids",
+          "type": "object"
+        }
+      },
+      "required": [
+        "app_id"
+      ],
+      "title": "AppAuthConfig",
+      "type": "object"
+    },
+    "CatalogConfig": {
+      "properties": {
+        "file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File"
+        }
+      },
+      "title": "CatalogConfig",
+      "type": "object"
+    },
+    "GitHubAdapterConfig": {
+      "description": "Configuration for the GitHub adapter.\n\nAuth modes (set ``auth.type``):\n  app           GitHub App \u2014 recommended for enterprise, one App covers all orgs.\n  token_per_org One PAT per organisation.\n  token         Single global PAT (simple / local / single-org use only).\n\nBackwards compatibility: if a top-level ``token`` key is present (old format),\nit is automatically migrated to ``auth: {type: token, token: ...}``.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "auth": {
+          "default": {
+            "type": "token",
+            "token": ""
+          },
+          "discriminator": {
+            "mapping": {
+              "app": "#/$defs/AppAuthConfig",
+              "token": "#/$defs/TokenAuthConfig",
+              "token_per_org": "#/$defs/TokenPerOrgConfig"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AppAuthConfig"
+            },
+            {
+              "$ref": "#/$defs/TokenPerOrgConfig"
+            },
+            {
+              "$ref": "#/$defs/TokenAuthConfig"
+            }
+          ],
+          "title": "Auth"
+        },
+        "orgs": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Orgs",
+          "type": "array"
+        },
+        "include_archived": {
+          "default": false,
+          "title": "Include Archived",
+          "type": "boolean"
+        },
+        "collect_ghas_alerts": {
+          "default": true,
+          "title": "Collect Ghas Alerts",
+          "type": "boolean"
+        },
+        "collect_secret_scanning": {
+          "default": true,
+          "title": "Collect Secret Scanning",
+          "type": "boolean"
+        },
+        "collect_dependabot": {
+          "default": true,
+          "title": "Collect Dependabot",
+          "type": "boolean"
+        },
+        "parse_workflows": {
+          "default": true,
+          "title": "Parse Workflows",
+          "type": "boolean"
+        },
+        "rate_limit_sleep_seconds": {
+          "default": 1.0,
+          "title": "Rate Limit Sleep Seconds",
+          "type": "number"
+        },
+        "per_page": {
+          "default": 100,
+          "title": "Per Page",
+          "type": "integer"
+        }
+      },
+      "title": "GitHubAdapterConfig",
+      "type": "object"
+    },
+    "JsonStoreConfig": {
+      "properties": {
+        "directory": {
+          "default": "./data",
+          "title": "Directory",
+          "type": "string"
+        }
+      },
+      "title": "JsonStoreConfig",
+      "type": "object"
+    },
+    "LoggingConfig": {
+      "properties": {
+        "level": {
+          "default": "INFO",
+          "title": "Level",
+          "type": "string"
+        },
+        "format": {
+          "default": "text",
+          "title": "Format",
+          "type": "string"
+        }
+      },
+      "title": "LoggingConfig",
+      "type": "object"
+    },
+    "OutputConfig": {
+      "properties": {
+        "default_format": {
+          "default": "table",
+          "title": "Default Format",
+          "type": "string"
+        },
+        "date_format": {
+          "default": "%Y-%m-%d",
+          "title": "Date Format",
+          "type": "string"
+        }
+      },
+      "title": "OutputConfig",
+      "type": "object"
+    },
+    "PostgresStoreConfig": {
+      "properties": {
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "PostgresStoreConfig",
+      "type": "object"
+    },
+    "SqliteStoreConfig": {
+      "properties": {
+        "path": {
+          "default": "./data/gitventory.db",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "title": "SqliteStoreConfig",
+      "type": "object"
+    },
+    "StaticYamlAdapterConfig": {
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "teams_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Teams File"
+        },
+        "aws_accounts_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Aws Accounts File"
+        },
+        "deployment_mappings_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Deployment Mappings File"
+        }
+      },
+      "title": "StaticYamlAdapterConfig",
+      "type": "object"
+    },
+    "StoreConfig": {
+      "properties": {
+        "backend": {
+          "default": "sqlite",
+          "title": "Backend",
+          "type": "string"
+        },
+        "sqlite": {
+          "$ref": "#/$defs/SqliteStoreConfig",
+          "default": {
+            "path": "./data/gitventory.db"
+          }
+        },
+        "json_store": {
+          "$ref": "#/$defs/JsonStoreConfig",
+          "default": {
+            "directory": "./data"
+          }
+        },
+        "postgres": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PostgresStoreConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "StoreConfig",
+      "type": "object"
+    },
+    "TokenAuthConfig": {
+      "description": "Single global PAT \u2014 suitable for simple / single-org / local setups.",
+      "properties": {
+        "type": {
+          "const": "token",
+          "default": "token",
+          "title": "Type",
+          "type": "string"
+        },
+        "token": {
+          "default": "",
+          "title": "Token",
+          "type": "string"
+        }
+      },
+      "title": "TokenAuthConfig",
+      "type": "object"
+    },
+    "TokenPerOrgConfig": {
+      "description": "Per-organisation PAT authentication.\n\nEach org maps to its own token.  The token for the org being scanned is\nselected at runtime \u2014 a leaked token only affects a single organisation.",
+      "properties": {
+        "type": {
+          "const": "token_per_org",
+          "default": "token_per_org",
+          "title": "Type",
+          "type": "string"
+        },
+        "org_tokens": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Org Tokens",
+          "type": "object"
+        }
+      },
+      "title": "TokenPerOrgConfig",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "version": {
+      "default": "1",
+      "title": "Version",
+      "type": "string"
+    },
+    "store": {
+      "$ref": "#/$defs/StoreConfig",
+      "default": {
+        "backend": "sqlite",
+        "sqlite": {
+          "path": "./data/gitventory.db"
+        },
+        "json_store": {
+          "directory": "./data"
+        },
+        "postgres": null
+      }
+    },
+    "adapters": {
+      "$ref": "#/$defs/AdaptersConfig",
+      "default": {
+        "github": null,
+        "static_yaml": null
+      }
+    },
+    "catalog": {
+      "$ref": "#/$defs/CatalogConfig",
+      "default": {
+        "file": null
+      }
+    },
+    "logging": {
+      "$ref": "#/$defs/LoggingConfig",
+      "default": {
+        "level": "INFO",
+        "format": "text"
+      }
+    },
+    "output": {
+      "$ref": "#/$defs/OutputConfig",
+      "default": {
+        "default_format": "table",
+        "date_format": "%Y-%m-%d"
+      }
+    }
+  },
+  "title": "AppConfig",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Schema for config.yaml \u2014 gitventory configuration."
+}

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schemas/deployment_mappings.schema.json
 # Deployment mappings — fallback for repos that cannot be auto-detected via OIDC workflow parsing.
 # Prefer OIDC detection (automatic). Only add entries here for repos that use other deploy methods.
 # repo field accepts the full_name slug (org/repo) — resolved to stable github:ID on ingest.

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schemas/aws_accounts.schema.json
 # AWS account definitions — maintained manually.
 # Used by the static_yaml adapter to populate CloudAccount entities.
 # For accounts discovered automatically via AWS Organizations, use the aws_orgs adapter.

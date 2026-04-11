@@ -1,0 +1,80 @@
+{
+  "$defs": {
+    "AwsAccountEntry": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "environment": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Environment"
+        },
+        "ou_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ou Path"
+        },
+        "owning_team": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owning Team"
+        },
+        "tags": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Tags",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "title": "AwsAccountEntry",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "accounts": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AwsAccountEntry"
+      },
+      "title": "Accounts",
+      "type": "array"
+    }
+  },
+  "title": "AwsAccountsFile",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Schema for inventory/aws_accounts.yaml \u2014 known AWS accounts."
+}

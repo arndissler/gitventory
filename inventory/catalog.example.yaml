@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schemas/catalog.schema.json
 # gitventory catalog — copy to catalog.yaml and customise.
 #
 # The catalog defines your organizational meta-model: the entity types that make

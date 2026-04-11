@@ -1,0 +1,132 @@
+{
+  "$defs": {
+    "ExternalIdentityEntry": {
+      "description": "YAML representation of an external identity reference.",
+      "properties": {
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Metadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "provider",
+        "value"
+      ],
+      "title": "ExternalIdentityEntry",
+      "type": "object"
+    },
+    "TeamEntry": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "email": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Email"
+        },
+        "slack_channel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Slack Channel"
+        },
+        "github_team_slug": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Github Team Slug"
+        },
+        "members": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Members",
+          "type": "array"
+        },
+        "type": {
+          "default": "team",
+          "title": "Type",
+          "type": "string"
+        },
+        "identities": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ExternalIdentityEntry"
+          },
+          "title": "Identities",
+          "type": "array"
+        },
+        "contacts": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Contacts",
+          "type": "object"
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": true,
+          "default": {},
+          "title": "Properties"
+        }
+      },
+      "required": [
+        "id",
+        "display_name"
+      ],
+      "title": "TeamEntry",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "teams": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/TeamEntry"
+      },
+      "title": "Teams",
+      "type": "array"
+    }
+  },
+  "title": "TeamsFile",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Schema for inventory/teams.yaml \u2014 org parties (teams, squads, chapters, guilds)."
+}
