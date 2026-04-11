@@ -1,0 +1,114 @@
+# gitventory catalog — copy to catalog.yaml and customise.
+#
+# The catalog defines your organizational meta-model: the entity types that make
+# sense in your company (services, projects, domains, teams, products — whatever
+# fits your taxonomy) and the entities themselves.
+#
+# Matchers link catalog entities to technical artifacts (GitHub repositories,
+# cloud accounts) without touching any repository.  One artifact can belong to
+# multiple entities.
+
+catalog:
+
+  # --------------------------------------------------------------------------
+  # Entity types — define the vocabulary that makes sense for your organization.
+  # There is no fixed hierarchy.  Add as many types as you need.
+  # --------------------------------------------------------------------------
+  entity_types:
+    - id: service
+      display_name: Service
+
+    - id: project
+      display_name: Project
+
+    # Examples of other types you might define:
+    # - id: domain
+    #   display_name: Business Domain
+    # - id: platform-component
+    #   display_name: Platform Component
+
+  # --------------------------------------------------------------------------
+  # Entities — the actual catalog entries.
+  # Each entity can match repositories and/or cloud accounts via declarative
+  # rules (matchers).  No files need to be added to the matched repositories.
+  # --------------------------------------------------------------------------
+  entities:
+
+    # ------------------------------------------------------------------
+    # Example service: Checkout API
+    # ------------------------------------------------------------------
+    - id: checkout-api
+      type: service
+      display_name: Checkout API
+      description: Handles cart and order processing for the e-commerce platform.
+      owning_team: platform-engineering      # references id in teams.yaml
+      properties:
+        criticality: critical                # used for weighted alert priority
+        runbook_url: https://runbooks.internal/checkout-api
+        pagerduty_service_id: P1234AB
+        data_classification: pii
+
+      matchers:
+        # Repositories linked to this service
+        repos:
+          # Exact full name match
+          - full_name: "my-org/checkout-api"
+
+          # Glob — matches checkout-api, checkout-worker, checkout-scheduler, …
+          # - full_name: "my-org/checkout-*"
+
+          # All repos that have the "checkout" topic set
+          # - topics:
+          #     any: [checkout]
+
+          # Repos where a GitHub custom property "service" = "checkout-api"
+          # (requires GitHub custom properties to be configured at the org level)
+          # - github_property:
+          #     name: service
+          #     value: checkout-api
+
+        # Cloud accounts linked to this service
+        accounts:
+          # Stable ID (most explicit — recommended)
+          - id: "aws:123456789012"
+
+          # All accounts tagged with service=checkout-api
+          # - tags:
+          #     service: checkout-api
+
+          # All production accounts
+          # - environment: prod
+
+    # ------------------------------------------------------------------
+    # Example service: Internal Deploy CLI
+    # ------------------------------------------------------------------
+    - id: deploy-cli
+      type: service
+      display_name: Deploy CLI
+      description: Internal tool used by engineers to trigger deployments.
+      owning_team: platform-engineering
+      properties:
+        criticality: low
+      matchers:
+        repos:
+          - full_name: "my-org/deploy-cli"
+
+    # ------------------------------------------------------------------
+    # Example project: E-Commerce Platform
+    # Projects can span multiple services and share ownership.
+    # ------------------------------------------------------------------
+    - id: e-commerce
+      type: project
+      display_name: E-Commerce Platform
+      description: All services and accounts that support the customer-facing shop.
+      owning_team: platform-engineering
+      properties:
+        criticality: critical
+      matchers:
+        repos:
+          - full_name: "my-org/checkout-*"
+          - full_name: "my-org/payments-*"
+          - full_name: "my-org/storefront"
+        accounts:
+          - tags:
+              project: e-commerce

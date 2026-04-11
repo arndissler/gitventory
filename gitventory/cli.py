@@ -93,6 +93,7 @@ def query() -> None:
 
 @query.command("repos")
 @click.option("--repo", default=None, help="Filter by repository full_name (org/name) or stable ID (github:NNN).")
+@click.option("--catalog-entity", "catalog_entity", default=None, help="Filter by catalog entity slug or stable ID.")
 @click.option("--provider", default=None, help="Filter by provider (github, azuredevops).")
 @click.option("--org", default=None, help="Filter by organisation.")
 @click.option("--team", default=None, help="Filter by owning team slug.")
@@ -106,6 +107,7 @@ def query() -> None:
 def query_repos(
     ctx: click.Context,
     repo: Optional[str],
+    catalog_entity: Optional[str],
     provider: Optional[str],
     org: Optional[str],
     team: Optional[str],
@@ -117,7 +119,7 @@ def query_repos(
     fields: Optional[str],
 ) -> None:
     """List repositories matching the given filters."""
-    from gitventory.models import Repository
+    from gitventory.models import CatalogMembership, Repository
     from gitventory.store.query import build_repo_filters
 
     config = _load_config(ctx)
@@ -133,7 +135,20 @@ def query_repos(
     )
 
     with create_store(config.store) as store:
-        results = store.query(Repository, filters)
+        if catalog_entity:
+            entity = _resolve_catalog_entity(store, catalog_entity)
+            if entity is None:
+                err_console.print(f"[red]Catalog entity not found:[/red] {catalog_entity}")
+                sys.exit(1)
+            memberships = store.query(
+                CatalogMembership,
+                {"catalog_entity_id": entity.id, "technical_entity_type": "repository"},
+            )
+            repo_ids = {m.technical_entity_id for m in memberships}
+            all_repos = store.query(Repository, filters)
+            results = [r for r in all_repos if r.id in repo_ids]
+        else:
+            results = store.query(Repository, filters)
 
     if not results:
         console.print("[dim]No repositories found.[/dim]")
@@ -145,6 +160,37 @@ def query_repos(
     cols = fields.split(",") if fields else default_fields
 
     _output(results, cols, output_fmt, "Repositories")
+
+
+@query.command("catalog")
+@click.option("--type", "type_id", default=None, help="Filter by entity type (e.g. service, project).")
+@click.option("--criticality", default=None, help="Filter by criticality (critical, high, medium, low).")
+@click.option("--team", default=None, help="Filter by owning team slug.")
+@click.option("-o", "--output", "output_fmt", default="table", type=click.Choice(["table", "json"]), show_default=True)
+@click.pass_context
+def query_catalog(
+    ctx: click.Context,
+    type_id: Optional[str],
+    criticality: Optional[str],
+    team: Optional[str],
+    output_fmt: str,
+) -> None:
+    """List catalog entities (services, projects, etc.) matching the given filters."""
+    from gitventory.models import CatalogEntity
+    from gitventory.store.query import build_catalog_filters
+
+    config = _load_config(ctx)
+    filters = build_catalog_filters(type_id=type_id, criticality=criticality, team=team)
+
+    with create_store(config.store) as store:
+        results = store.query(CatalogEntity, filters)
+
+    if not results:
+        console.print("[dim]No catalog entities found.[/dim]")
+        return
+
+    cols = ["id", "type_id", "display_name", "criticality", "owning_team_id", "description"]
+    _output(results, cols, output_fmt, "Catalog Entities")
 
 
 @query.command("accounts")
@@ -182,7 +228,9 @@ def query_accounts(
 @click.option("--type", "alert_type", default=None, type=click.Choice(["secret_scanning", "code_scanning", "dependabot"]), help="Alert type.")
 @click.option("--severity", default=None, help="Filter by severity (critical, high, medium, low).")
 @click.option("--repo", "repo_id", default=None, help="Filter by repository ID or full_name slug.")
+@click.option("--catalog-entity", "catalog_entity", default=None, help="Filter by catalog entity slug or stable ID.")
 @click.option("--state", default="open", type=click.Choice(["open", "dismissed", "fixed", "all"]), show_default=True)
+@click.option("--sort-by", "sort_by", default=None, type=click.Choice(["weighted-priority"]), help="Sort results.")
 @click.option("-o", "--output", "output_fmt", default="table", type=click.Choice(["table", "json"]), show_default=True)
 @click.pass_context
 def query_alerts(
@@ -190,11 +238,13 @@ def query_alerts(
     alert_type: Optional[str],
     severity: Optional[str],
     repo_id: Optional[str],
+    catalog_entity: Optional[str],
     state: str,
+    sort_by: Optional[str],
     output_fmt: str,
 ) -> None:
     """List GHAS alerts matching the given filters."""
-    from gitventory.models import GhasAlert
+    from gitventory.models import CatalogEntity, CatalogMembership, GhasAlert, Repository
     from gitventory.store.query import build_alert_filters
 
     config = _load_config(ctx)
@@ -203,14 +253,48 @@ def query_alerts(
     )
 
     with create_store(config.store) as store:
-        results = store.query(GhasAlert, filters)
+        if catalog_entity:
+            entity = _resolve_catalog_entity(store, catalog_entity)
+            if entity is None:
+                err_console.print(f"[red]Catalog entity not found:[/red] {catalog_entity}")
+                sys.exit(1)
+            memberships = store.query(
+                CatalogMembership,
+                {"catalog_entity_id": entity.id, "technical_entity_type": "repository"},
+            )
+            repo_ids = {m.technical_entity_id for m in memberships}
+            all_alerts = store.query(GhasAlert, filters)
+            results = [a for a in all_alerts if a.repo_id in repo_ids]
+        else:
+            results = store.query(GhasAlert, filters)
+
+        # Build criticality lookup if weighted sort requested
+        criticality_by_repo: dict[str, Optional[str]] = {}
+        if sort_by == "weighted-priority":
+            all_memberships = store.query(CatalogMembership, {"technical_entity_type": "repository"})
+            for m in all_memberships:
+                ce = store.get(CatalogEntity, m.catalog_entity_id)
+                if ce and ce.criticality:
+                    existing = criticality_by_repo.get(m.technical_entity_id)
+                    if existing is None or _criticality_score(ce.criticality) > _criticality_score(existing):
+                        criticality_by_repo[m.technical_entity_id] = ce.criticality
 
     if not results:
         console.print("[dim]No alerts found.[/dim]")
         return
 
-    cols = ["id", "repo_id", "alert_type", "state", "severity", "secret_type", "rule_id", "created_at", "url"]
-    _output(results, cols, output_fmt, "GHAS Alerts")
+    if sort_by == "weighted-priority":
+        results.sort(
+            key=lambda a: _weighted_priority(a.severity, criticality_by_repo.get(a.repo_id)),
+            reverse=True,
+        )
+
+    cols = ["repo_id", "alert_type", "state", "severity", "secret_type", "rule_id", "created_at", "url"]
+    if sort_by == "weighted-priority":
+        # Annotate results with weighted_priority for display
+        _output_alerts_with_priority(results, criticality_by_repo, output_fmt)
+    else:
+        _output(results, cols, output_fmt, "GHAS Alerts")
 
 
 @query.command("mappings")
@@ -247,6 +331,52 @@ def query_mappings(
 
 
 # ---------------------------------------------------------------------------
+# catalog group
+# ---------------------------------------------------------------------------
+
+@main.group()
+def catalog() -> None:
+    """Catalog management — sync and query the organizational meta-model."""
+
+
+@catalog.command("sync")
+@click.option("--clear", is_flag=True, help="Delete all existing memberships before re-evaluating.")
+@click.option("-v", "--verbose", is_flag=True, help="Enable DEBUG logging.")
+@click.pass_context
+def catalog_sync(ctx: click.Context, clear: bool, verbose: bool) -> None:
+    """Evaluate catalog matchers and update membership links in the store.
+
+    Re-runs the matcher step without re-fetching data from GitHub or other
+    adapters.  Use --clear to wipe all existing memberships first (full re-hydration).
+    """
+    _setup_logging(verbose)
+    config = _load_config(ctx)
+
+    if not config.catalog.file:
+        err_console.print(
+            "[red]No catalog file configured.[/red] "
+            "Add [bold]catalog.file[/bold] to config.yaml."
+        )
+        sys.exit(1)
+
+    from gitventory.catalog.sync import CatalogSyncer
+    with create_store(config.store) as store:
+        syncer = CatalogSyncer(config.catalog.file, store)
+        try:
+            counts = syncer.sync(clear=clear)
+        except FileNotFoundError as exc:
+            err_console.print(f"[red]Catalog file not found:[/red] {exc}")
+            sys.exit(1)
+
+    if clear:
+        console.print("[yellow]Memberships cleared and rebuilt.[/yellow]")
+    console.print(
+        f"[green]Catalog sync complete:[/green] "
+        f"{counts['entities']} entities, {counts['memberships']} memberships"
+    )
+
+
+# ---------------------------------------------------------------------------
 # show
 # ---------------------------------------------------------------------------
 
@@ -271,6 +401,65 @@ def show_repo(ctx: click.Context, repo_id: str) -> None:
         sys.exit(1)
 
     _print_detail(entity)
+
+
+@show.command("catalog")
+@click.argument("entity_id")
+@click.pass_context
+def show_catalog(ctx: click.Context, entity_id: str) -> None:
+    """Show full details for a catalog entity including linked repos and accounts.
+
+    Accepts a stable ID (catalog:service:checkout-api), a provider_id
+    (service:checkout-api), or an entity slug (checkout-api).
+    """
+    from gitventory.models import CatalogEntity, CatalogMembership, Repository, CloudAccount
+
+    config = _load_config(ctx)
+    with create_store(config.store) as store:
+        entity = _resolve_catalog_entity(store, entity_id)
+        if entity is None:
+            err_console.print(f"[red]Catalog entity not found:[/red] {entity_id}")
+            sys.exit(1)
+
+        _print_detail(entity)
+
+        # Show linked technical entities
+        memberships = store.query(CatalogMembership, {"catalog_entity_id": entity.id})
+        if memberships:
+            repo_ids = [m.technical_entity_id for m in memberships if m.technical_entity_type == "repository"]
+            account_ids = [m.technical_entity_id for m in memberships if m.technical_entity_type == "cloud_account"]
+
+            if repo_ids:
+                repos = [store.get(Repository, rid) for rid in repo_ids]
+                repos = [r for r in repos if r]
+                if repos:
+                    import rich.table as rt
+                    tbl = rt.Table(title=f"Linked Repositories ({len(repos)})")
+                    for col in ["full_name", "language", "is_archived", "open_secret_alerts", "open_dependabot_alerts"]:
+                        tbl.add_column(col.replace("_", " ").title())
+                    for r in repos:
+                        tbl.add_row(
+                            r.full_name or "",
+                            r.language or "[dim]—[/dim]",
+                            "[yellow]archived[/yellow]" if r.is_archived else "no",
+                            f"[red]{r.open_secret_alerts}[/red]" if r.open_secret_alerts else "0",
+                            f"[red]{r.open_dependabot_alerts}[/red]" if r.open_dependabot_alerts else "0",
+                        )
+                    console.print(tbl)
+
+            if account_ids:
+                accounts_list = [store.get(CloudAccount, aid) for aid in account_ids]
+                accounts_list = [a for a in accounts_list if a]
+                if accounts_list:
+                    import rich.table as rt
+                    tbl = rt.Table(title=f"Linked Cloud Accounts ({len(accounts_list)})")
+                    for col in ["id", "provider", "name", "environment"]:
+                        tbl.add_column(col.replace("_", " ").title())
+                    for a in accounts_list:
+                        tbl.add_row(a.id, a.provider, a.name or "", a.environment or "[dim]—[/dim]")
+                    console.print(tbl)
+        else:
+            console.print("[dim]No linked repositories or accounts.[/dim]")
 
 
 @show.command("account")
@@ -480,6 +669,32 @@ def _output(results: list, cols: list[str], fmt: str, title: str) -> None:
     console.print(table)
 
 
+def _resolve_catalog_entity(store, entity_id: str):
+    """Accept stable ID, provider_id (type:slug), or bare slug."""
+    from gitventory.models import CatalogEntity
+
+    # Try stable ID first (catalog:type:slug)
+    entity = store.get(CatalogEntity, entity_id)
+    if entity:
+        return entity
+
+    # Try provider_id (type:slug) — query by provider_id
+    results = store.query(CatalogEntity, {"provider_id": entity_id})
+    if results:
+        return results[0]
+
+    # Try bare slug — match against the last component of provider_id
+    # e.g. "checkout-api" matches "service:checkout-api"
+    all_entities = store.query(CatalogEntity, {})
+    for e in all_entities:
+        # provider_id is "{type_id}:{entity_slug}"
+        slug = e.provider_id.split(":", 1)[-1] if ":" in e.provider_id else e.provider_id
+        if slug == entity_id:
+            return e
+
+    return None
+
+
 def _resolve_repo(store, repo_id: str):
     """Accept either a stable ID (``github:NNN``) or a full_name slug (``org/repo``)."""
     from gitventory.models import Repository
@@ -492,6 +707,80 @@ def _resolve_repo(store, repo_id: str):
     # Fall back to full_name slug query
     results = store.query(Repository, {"full_name": repo_id})
     return results[0] if results else None
+
+
+_SEVERITY_SCORES = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+_CRITICALITY_WEIGHTS = {"critical": 2.0, "high": 1.5, "medium": 1.0, "low": 0.5}
+
+
+def _criticality_score(criticality: Optional[str]) -> float:
+    return _CRITICALITY_WEIGHTS.get(criticality or "", 1.0)
+
+
+def _weighted_priority(severity: Optional[str], criticality: Optional[str]) -> float:
+    """Compute severity × criticality_weight.
+
+    Original alert severity is never mutated — this is computed at display time only.
+    A repo not linked to any catalog entity defaults to weight 1.0 (neutral).
+    """
+    s = _SEVERITY_SCORES.get(severity or "", 0)
+    w = _CRITICALITY_WEIGHTS.get(criticality or "", 1.0)
+    return s * w
+
+
+def _output_alerts_with_priority(
+    alerts: list,
+    criticality_by_repo: dict[str, Optional[str]],
+    output_fmt: str,
+) -> None:
+    """Output alerts with an extra weighted_priority column."""
+    cols = ["repo_id", "alert_type", "state", "severity", "weighted_priority",
+            "secret_type", "rule_id", "created_at"]
+
+    if output_fmt == "json":
+        output_data = []
+        for a in alerts:
+            wp = _weighted_priority(a.severity, criticality_by_repo.get(a.repo_id))
+            row = {
+                "repo_id": a.repo_id,
+                "alert_type": a.alert_type,
+                "state": a.state,
+                "severity": a.severity,
+                "weighted_priority": wp,
+                "secret_type": a.secret_type,
+                "rule_id": a.rule_id,
+                "created_at": str(a.created_at),
+            }
+            output_data.append(row)
+        console.print_json(json.dumps(output_data))
+        return
+
+    table = Table(title=f"GHAS Alerts — sorted by weighted priority ({len(alerts)})")
+    for col in cols:
+        table.add_column(col.replace("_", " ").title())
+
+    for a in alerts:
+        wp = _weighted_priority(a.severity, criticality_by_repo.get(a.repo_id))
+        wp_str = f"{wp:.1f}"
+        if wp >= 6:
+            wp_str = f"[bold red]{wp_str}[/bold red]"
+        elif wp >= 3:
+            wp_str = f"[red]{wp_str}[/red]"
+        elif wp >= 1.5:
+            wp_str = f"[yellow]{wp_str}[/yellow]"
+
+        table.add_row(
+            a.repo_id or "",
+            a.alert_type or "",
+            a.state or "",
+            a.severity or "[dim]—[/dim]",
+            wp_str,
+            a.secret_type or "[dim]—[/dim]",
+            a.rule_id or "[dim]—[/dim]",
+            str(a.created_at) if a.created_at else "[dim]—[/dim]",
+        )
+
+    console.print(table)
 
 
 def _print_detail(entity) -> None:

@@ -23,6 +23,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 
 from gitventory.models.base import InventoryEntity
+from gitventory.models.catalog import CatalogEntity, CatalogMembership
 from gitventory.models.cloud_account import CloudAccount
 from gitventory.models.deployment_mapping import DeploymentMapping
 from gitventory.models.ghas_alert import GhasAlert
@@ -141,6 +142,36 @@ ghas_alerts = Table(
     Column("raw", Text),
 )
 
+catalog_entities = Table(
+    "catalog_entities",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("provider_id", String, nullable=False),
+    Column("source_adapter", String, nullable=False),
+    Column("collected_at", DateTime(timezone=True), nullable=False),
+    Column("type_id", String, nullable=False),
+    Column("type_display_name", String, nullable=False),
+    Column("display_name", String),
+    Column("description", String),
+    Column("owning_team_id", String),
+    Column("criticality", String),
+    Column("properties", Text),   # JSON object
+    Column("raw", Text),
+)
+
+catalog_memberships = Table(
+    "catalog_memberships",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("provider_id", String, nullable=False),
+    Column("source_adapter", String, nullable=False),
+    Column("collected_at", DateTime(timezone=True), nullable=False),
+    Column("catalog_entity_id", String, nullable=False),
+    Column("technical_entity_id", String, nullable=False),
+    Column("technical_entity_type", String, nullable=False),
+    Column("matched_by", String),
+)
+
 collection_runs = Table(
     "collection_runs",
     metadata,
@@ -160,6 +191,8 @@ _TYPE_TABLE: dict[type, Table] = {
     Team: teams,
     DeploymentMapping: deployment_mappings,
     GhasAlert: ghas_alerts,
+    CatalogEntity: catalog_entities,
+    CatalogMembership: catalog_memberships,
 }
 
 # ---------------------------------------------------------------------------
@@ -181,6 +214,11 @@ _INDEXES = [
     sa.Index("ix_mappings_repo", deployment_mappings.c.repo_id),
     sa.Index("ix_mappings_target", deployment_mappings.c.target_id),
     sa.Index("ix_mappings_method", deployment_mappings.c.detection_method),
+    sa.Index("ix_catalog_type_id", catalog_entities.c.type_id),
+    sa.Index("ix_catalog_criticality", catalog_entities.c.criticality),
+    sa.Index("ix_catalog_owning_team", catalog_entities.c.owning_team_id),
+    sa.Index("ix_membership_catalog_entity", catalog_memberships.c.catalog_entity_id),
+    sa.Index("ix_membership_technical_entity", catalog_memberships.c.technical_entity_id),
 ]
 
 
@@ -308,6 +346,12 @@ class SQLiteStore(AbstractStore):
     # Lifecycle
     # ------------------------------------------------------------------
 
+    def clear_catalog_memberships(self) -> None:
+        """Delete all CatalogMembership rows — used before a re-hydration sync."""
+        with self._engine.begin() as conn:
+            conn.execute(catalog_memberships.delete())
+        logger.debug("Cleared all catalog_memberships rows")
+
     def close(self) -> None:
         self._engine.dispose()
 
@@ -354,7 +398,7 @@ def _entity_to_row(entity: InventoryEntity) -> dict[str, Any]:
     """Convert an InventoryEntity to a flat dict suitable for SQL insertion."""
     data = entity.model_dump(mode="python")
     # Serialise nested structures to JSON text
-    for key in ("topics", "members", "tags"):
+    for key in ("topics", "members", "tags", "properties"):
         if key in data and data[key] is not None:
             data[key] = json.dumps(data[key])
     if "raw" in data and data["raw"] is not None:
@@ -365,7 +409,7 @@ def _entity_to_row(entity: InventoryEntity) -> dict[str, Any]:
 def _row_to_entity(entity_type: Type[E], row: dict[str, Any]) -> E:
     """Reconstruct an InventoryEntity from a SQL row dict."""
     data = dict(row)
-    for key in ("topics", "members", "tags"):
+    for key in ("topics", "members", "tags", "properties"):
         if key in data and data[key] is not None:
             data[key] = json.loads(data[key])
     if "raw" in data and data["raw"] is not None:

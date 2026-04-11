@@ -109,4 +109,20 @@ class CollectionRunner:
                     )
                 results[name] = 0
 
+        if not dry_run and self.config.catalog.file:
+            self._run_catalog_sync()
+
         return results
+
+    def _run_catalog_sync(self) -> None:
+        """Evaluate catalog matchers after all adapters have run."""
+        from gitventory.catalog.sync import CatalogSyncer
+        try:
+            syncer = CatalogSyncer(self.config.catalog.file, self.store)  # type: ignore[arg-type]
+            counts = syncer.sync(clear=False)
+            logger.info(
+                "Catalog sync: %d entities, %d memberships",
+                counts["entities"], counts["memberships"],
+            )
+        except Exception as exc:
+            logger.error("Catalog sync failed: %s", exc, exc_info=True)

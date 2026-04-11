@@ -77,6 +77,15 @@ class OutputConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Catalog config
+# ---------------------------------------------------------------------------
+
+class CatalogConfig(BaseModel):
+    file: Optional[str] = None
+    """Path to the catalog YAML file.  Set to ``None`` (or omit) to disable catalog sync."""
+
+
+# ---------------------------------------------------------------------------
 # Root config
 # ---------------------------------------------------------------------------
 
@@ -84,6 +93,7 @@ class AppConfig(BaseModel):
     version: str = "1"
     store: StoreConfig = StoreConfig()
     adapters: AdaptersConfig = AdaptersConfig()
+    catalog: CatalogConfig = CatalogConfig()
     logging: LoggingConfig = LoggingConfig()
     output: OutputConfig = OutputConfig()
 

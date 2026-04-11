@@ -210,6 +210,100 @@ mappings:
     environment: prod
 ```
 
+**`inventory/catalog.yaml`** — organizational meta-model (see [catalog section](#catalog) below):
+```yaml
+catalog:
+  entity_types:
+    - id: service
+      display_name: Service
+  entities:
+    - id: checkout-api
+      type: service
+      display_name: Checkout API
+      owning_team: platform-engineering
+      properties:
+        criticality: critical
+      matchers:
+        repos:
+          - full_name: "my-org/checkout-api"
+        accounts:
+          - id: "aws:123456789012"
+```
+
+---
+
+## Catalog
+
+The catalog is gitventory's organizational meta-model. It lets you define the entities that people in your company actually talk about — services, projects, domains, or whatever taxonomy fits your organization — and link them to technical artifacts (repositories, cloud accounts) using declarative **matchers**.
+
+No files need to be added to any repository. Matching is configured centrally in `inventory/catalog.yaml`.
+
+### Entity types
+
+Entity types are fully user-defined. There is no fixed hierarchy. Define the types that make sense:
+
+```yaml
+catalog:
+  entity_types:
+    - id: service
+      display_name: Service
+    - id: project
+      display_name: Project
+    - id: domain
+      display_name: Business Domain
+```
+
+### Matchers
+
+Matchers link catalog entities to repos and cloud accounts. Rules within a single entity are OR'd — any matching rule creates a link. One artifact can belong to multiple entities.
+
+**Repo matchers:**
+
+| Matcher | Example | Description |
+|---|---|---|
+| `full_name` | `"my-org/checkout-api"` | Exact match |
+| `full_name` | `"my-org/checkout-*"` | Glob pattern (`fnmatch`) |
+| `topics.any` | `[checkout, payments]` | Repo has any of these topics |
+| `github_property` | `{name: service, value: checkout}` | GitHub custom property |
+
+**Account matchers:**
+
+| Matcher | Example | Description |
+|---|---|---|
+| `id` | `"aws:123456789012"` | Stable account ID |
+| `tags` | `{service: checkout}` | Account has all these tags |
+| `environment` | `prod` | Direct field equality |
+| `provider` | `aws` | Direct field equality |
+
+### Criticality and weighted alert priority
+
+Set `criticality` in `properties` to weight alerts from that entity's repos:
+
+```yaml
+properties:
+  criticality: critical   # critical | high | medium | low
+```
+
+When querying alerts with `--sort-by weighted-priority`, the original severity is preserved but a `weighted_priority` score is computed: `severity_score × criticality_weight`. A `high` alert in a `critical` service scores higher than the same alert in a `low`-criticality tool.
+
+| Criticality | Weight |
+|---|---|
+| `critical` | 2.0 |
+| `high` | 1.5 |
+| `medium` | 1.0 |
+| `low` | 0.5 |
+| *(unlinked)* | 1.0 |
+
+### Catalog sync
+
+Catalog matching runs automatically after `gitventory collect`. You can also run it independently:
+
+```bash
+gitventory catalog sync              # evaluate matchers, update links
+gitventory catalog sync --clear      # wipe all links first, then rebuild
+gitventory catalog sync --clear -v   # verbose output
+```
+
 ---
 
 ## Usage
@@ -258,6 +352,28 @@ gitventory query repos -f "open_secret_alerts>0"
 
 > **Tip:** `gitventory show repo my-org/my-repo` shows the full detail view for a single repository (all fields, no column filtering). `query repos --repo` returns the same condensed table row as a regular list query, which is easier to pipe or export as JSON.
 
+### Query catalog entities
+
+```bash
+# All catalog entities
+gitventory query catalog
+
+# Filter by entity type
+gitventory query catalog --type service
+gitventory query catalog --type project -o json
+
+# Filter by criticality
+gitventory query catalog --criticality critical
+
+# Repos linked to a specific catalog entity
+gitventory query repos --catalog-entity checkout-api
+gitventory query repos --catalog-entity catalog:service:checkout-api
+
+# Show full detail for a catalog entity (properties + linked repos and accounts)
+gitventory show catalog checkout-api
+gitventory show catalog service:checkout-api
+```
+
 ### Query cloud accounts
 
 ```bash
@@ -295,6 +411,13 @@ gitventory query alerts --type dependabot --severity high
 
 # All alerts for a specific repo
 gitventory query alerts --repo github:12345678
+
+# All alerts for repos linked to a catalog entity
+gitventory query alerts --catalog-entity checkout-api
+
+# Sorted by weighted priority (severity × service criticality weight)
+gitventory query alerts --sort-by weighted-priority
+gitventory query alerts --catalog-entity checkout-api --sort-by weighted-priority -o json
 ```
 
 ### Inspect a single entity

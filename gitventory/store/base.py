@@ -89,6 +89,20 @@ class AbstractStore(ABC):
         ...
 
     # ------------------------------------------------------------------
+    # Catalog
+    # ------------------------------------------------------------------
+
+    def clear_catalog_memberships(self) -> None:
+        """Delete all CatalogMembership records.  Used for re-hydration runs.
+
+        Default implementation raises NotImplementedError.  Stores that support
+        catalog sync must override this.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement clear_catalog_memberships()"
+        )
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 

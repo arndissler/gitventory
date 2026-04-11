@@ -75,6 +75,11 @@ adapters:
     aws_accounts_file: "./inventory/aws_accounts.yaml"
     deployment_mappings_file: "./inventory/deployment_mappings.yaml"
 
+catalog:
+  # Path to the catalog YAML file.  Omit or set to null to disable catalog sync.
+  # Copy inventory/catalog.example.yaml to inventory/catalog.yaml to get started.
+  file: "./inventory/catalog.yaml"
+
 logging:
   level: INFO                      # DEBUG | INFO | WARNING | ERROR
   format: text                     # "text" | "json"

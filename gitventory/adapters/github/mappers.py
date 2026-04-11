@@ -60,6 +60,9 @@ def repo_to_entity(
             "full_name": gh_repo.full_name,
             "visibility": gh_repo.visibility,
             "archived": gh_repo.archived,
+            # GitHub custom properties — used by catalog github_property matchers.
+            # Returns a dict if the API exposes them; empty dict otherwise.
+            "custom_properties": getattr(gh_repo, "custom_properties", None) or {},
         },
     )
 

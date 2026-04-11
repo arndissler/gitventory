@@ -81,6 +81,21 @@ def build_alert_filters(
     return filters
 
 
+def build_catalog_filters(
+    type_id: Optional[str] = None,
+    criticality: Optional[str] = None,
+    team: Optional[str] = None,
+) -> dict[str, Any]:
+    filters: dict[str, Any] = {}
+    if type_id:
+        filters["type_id"] = type_id
+    if criticality:
+        filters["criticality"] = criticality
+    if team:
+        filters["owning_team_id"] = f"team:{team}" if not team.startswith("team:") else team
+    return filters
+
+
 def build_mapping_filters(
     repo_id: Optional[str] = None,
     account_id: Optional[str] = None,
