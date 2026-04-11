@@ -121,6 +121,25 @@ class GitHubClient:
         gh = self._get_gh(org)
         return gh.get_repo(full_name)
 
+    def list_team_repos(self, org: str, team_slug: str) -> list[GHRepository]:
+        """Return all repositories accessible to a GitHub team.
+
+        Requires the GitHub App / PAT to have Contents or Metadata read permission
+        on the target org.  Returns an empty list if the team or org is not found.
+        """
+        gh = self._get_gh(org)
+        try:
+            team = gh.get_organization(org).get_team_by_slug(team_slug)
+            return list(team.get_repos())
+        except GithubException as e:
+            if e.status in (403, 404):
+                logger.warning(
+                    "Cannot list repos for team %r in org %r (HTTP %d): %s",
+                    team_slug, org, e.status, e.data,
+                )
+                return []
+            raise
+
     def get_repo_contents(self, repo: GHRepository, path: str) -> list | None:
         """Return directory listing or None if path doesn't exist."""
         try:

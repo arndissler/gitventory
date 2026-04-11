@@ -6,7 +6,7 @@ they accept what humans write and the adapter maps them to InventoryEntity subcl
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel
 
@@ -15,14 +15,27 @@ from pydantic import BaseModel
 # teams.yaml
 # ---------------------------------------------------------------------------
 
+class ExternalIdentityEntry(BaseModel):
+    """YAML representation of an external identity reference."""
+    provider: str
+    value: str
+    metadata: dict[str, Any] = {}
+
+
 class TeamEntry(BaseModel):
     id: str
     """Stable slug, e.g. ``"platform-engineering"``."""
     display_name: str
+    # Legacy flat fields — kept for backwards compatibility; still parsed unchanged
     email: Optional[str] = None
     slack_channel: Optional[str] = None
     github_team_slug: Optional[str] = None
     members: list[str] = []
+    # New structured fields — all optional so old-format files load without changes
+    type: str = "team"
+    identities: list[ExternalIdentityEntry] = []
+    contacts: dict[str, str] = {}
+    properties: dict[str, Any] = {}
 
 
 class TeamsFile(BaseModel):

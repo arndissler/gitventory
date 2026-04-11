@@ -34,6 +34,18 @@ class AbstractStore(ABC):
         """Consume an iterator of entities, upsert each, and return the count written."""
         ...
 
+    def patch(self, entity_type: type, entity_id: str, updates: dict[str, Any]) -> bool:
+        """Update specific fields on an existing entity without touching other fields.
+
+        Returns True if the entity was found, False if not found.
+
+        Default implementation raises NotImplementedError.  Stores that support
+        partial updates must override this.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement patch()"
+        )
+
     # ------------------------------------------------------------------
     # Reads
     # ------------------------------------------------------------------

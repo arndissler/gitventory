@@ -112,6 +112,9 @@ class CollectionRunner:
         if not dry_run and self.config.catalog.file:
             self._run_catalog_sync()
 
+        if not dry_run and self.config.adapters.github and self.config.adapters.github.enabled:
+            self._run_ownership_sync()
+
         return results
 
     def _run_catalog_sync(self) -> None:
@@ -126,3 +129,16 @@ class CollectionRunner:
             )
         except Exception as exc:
             logger.error("Catalog sync failed: %s", exc, exc_info=True)
+
+    def _run_ownership_sync(self) -> None:
+        """Assign owning_team_id on repositories from GitHub team membership."""
+        from gitventory.ownership.sync import OwnershipSyncer
+        try:
+            syncer = OwnershipSyncer(self.config.adapters.github, self.store)  # type: ignore[arg-type]
+            counts = syncer.sync(force=False)
+            logger.info(
+                "Ownership sync: %d repos updated across %d teams",
+                counts["repos_updated"], counts["teams_processed"],
+            )
+        except Exception as exc:
+            logger.error("Ownership sync failed: %s", exc, exc_info=True)

@@ -19,7 +19,7 @@ from gitventory.adapters.static_yaml.schema import (
 from gitventory.models.cloud_account import CloudAccount
 from gitventory.models.deployment_mapping import DeploymentMapping
 from gitventory.models.base import InventoryEntity
-from gitventory.models.team import Team
+from gitventory.models.team import ExternalIdentity, Team
 from gitventory.registry import register_adapter
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,17 @@ class StaticYamlAdapter(AbstractAdapter):
                 slack_channel=entry.slack_channel,
                 github_team_slug=entry.github_team_slug,
                 members=entry.members,
+                type_id=entry.type,
+                identities=[
+                    ExternalIdentity(
+                        provider=i.provider,
+                        value=i.value,
+                        metadata=i.metadata,
+                    )
+                    for i in entry.identities
+                ],
+                contacts=entry.contacts,
+                properties=entry.properties,
                 raw=entry.model_dump(),
             )
             logger.debug("Loaded team: team:%s", entry.id)

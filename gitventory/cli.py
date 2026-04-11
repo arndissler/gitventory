@@ -193,6 +193,34 @@ def query_catalog(
     _output(results, cols, output_fmt, "Catalog Entities")
 
 
+@query.command("teams")
+@click.option("--type", "type_id", default=None, help="Filter by party type (team, squad, chapter, guild, …).")
+@click.option("-o", "--output", "output_fmt", default="table", type=click.Choice(["table", "json"]), show_default=True)
+@click.pass_context
+def query_teams(
+    ctx: click.Context,
+    type_id: Optional[str],
+    output_fmt: str,
+) -> None:
+    """List org parties (teams, squads, chapters, …)."""
+    from gitventory.models import Team
+
+    config = _load_config(ctx)
+    filters: dict = {}
+    if type_id:
+        filters["type_id"] = type_id
+
+    with create_store(config.store) as store:
+        results = store.query(Team, filters)
+
+    if not results:
+        console.print("[dim]No teams found.[/dim]")
+        return
+
+    cols = ["id", "type_id", "display_name", "email", "slack_channel", "github_team_slug"]
+    _output(results, cols, output_fmt, "Teams")
+
+
 @query.command("accounts")
 @click.option("--provider", default=None, help="Filter by provider (aws, azure).")
 @click.option("--env", default=None, help="Filter by environment (prod, staging, dev).")
@@ -377,6 +405,56 @@ def catalog_sync(ctx: click.Context, clear: bool, verbose: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# ownership group
+# ---------------------------------------------------------------------------
+
+@main.group()
+def ownership() -> None:
+    """Ownership management — assign repo owners from GitHub team membership."""
+
+
+@ownership.command("sync")
+@click.option("--force", is_flag=True, help="Overwrite existing owning_team_id assignments.")
+@click.option("-v", "--verbose", is_flag=True, help="Enable DEBUG logging.")
+@click.pass_context
+def ownership_sync(ctx: click.Context, force: bool, verbose: bool) -> None:
+    """Assign owning_team_id on repositories from GitHub team membership.
+
+    Reads teams from the store (as loaded by static_yaml), resolves their GitHub
+    team identities, fetches the repository list for each team, and patches
+    owning_team_id on repos that don't already have an owner (unless --force).
+
+    Precedence: owning_team_id already set in YAML or catalog is never
+    overwritten unless --force is passed.
+    """
+    _setup_logging(verbose)
+    config = _load_config(ctx)
+
+    if not config.adapters.github or not config.adapters.github.enabled:
+        err_console.print(
+            "[red]GitHub adapter not configured or disabled.[/red] "
+            "Ownership sync requires the GitHub adapter."
+        )
+        sys.exit(1)
+
+    from gitventory.ownership.sync import OwnershipSyncer
+    with create_store(config.store) as store:
+        syncer = OwnershipSyncer(config.adapters.github, store)
+        try:
+            counts = syncer.sync(force=force)
+        except Exception as exc:
+            err_console.print(f"[red]Ownership sync failed:[/red] {exc}")
+            sys.exit(1)
+
+    if force:
+        console.print("[yellow]Ownership sync ran with --force (existing assignments overwritten).[/yellow]")
+    console.print(
+        f"[green]Ownership sync complete:[/green] "
+        f"{counts['repos_updated']} repos updated across {counts['teams_processed']} teams"
+    )
+
+
+# ---------------------------------------------------------------------------
 # show
 # ---------------------------------------------------------------------------
 
@@ -488,8 +566,8 @@ def show_account(ctx: click.Context, account_id: str) -> None:
 @click.argument("team_id")
 @click.pass_context
 def show_team(ctx: click.Context, team_id: str) -> None:
-    """Show full details for a team."""
-    from gitventory.models import Team
+    """Show full details for a team including identity mappings and linked repositories."""
+    from gitventory.models import Repository, Team
 
     config = _load_config(ctx)
     if not team_id.startswith("team:"):
@@ -497,12 +575,52 @@ def show_team(ctx: click.Context, team_id: str) -> None:
 
     with create_store(config.store) as store:
         entity = store.get(Team, team_id)
+        if entity is None:
+            err_console.print(f"[red]Team not found:[/red] {team_id}")
+            sys.exit(1)
 
-    if entity is None:
-        err_console.print(f"[red]Team not found:[/red] {team_id}")
-        sys.exit(1)
+        _print_detail(entity)
 
-    _print_detail(entity)
+        # Show external identity mappings
+        if entity.identities:
+            import rich.table as rt
+            tbl = rt.Table(title=f"External Identities ({len(entity.identities)})")
+            tbl.add_column("Provider")
+            tbl.add_column("Value")
+            tbl.add_column("Metadata")
+            for ident in entity.identities:
+                meta = json.dumps(ident.metadata) if ident.metadata else "[dim]—[/dim]"
+                tbl.add_row(ident.provider, ident.value, meta)
+            console.print(tbl)
+
+        # Show contact channels
+        if entity.contacts:
+            import rich.table as rt
+            tbl = rt.Table(title=f"Contact Channels ({len(entity.contacts)})")
+            tbl.add_column("Channel")
+            tbl.add_column("Value")
+            for channel, value in entity.contacts.items():
+                tbl.add_row(channel, value)
+            console.print(tbl)
+
+        # Show linked repositories (repos where owning_team_id == team.id)
+        repos = store.query(Repository, {"owning_team_id": entity.id})
+        if repos:
+            import rich.table as rt
+            tbl = rt.Table(title=f"Owned Repositories ({len(repos)})")
+            for col in ["full_name", "language", "is_archived", "open_secret_alerts", "open_dependabot_alerts"]:
+                tbl.add_column(col.replace("_", " ").title())
+            for r in repos:
+                tbl.add_row(
+                    r.full_name or "",
+                    r.language or "[dim]—[/dim]",
+                    "[yellow]archived[/yellow]" if r.is_archived else "no",
+                    f"[red]{r.open_secret_alerts}[/red]" if r.open_secret_alerts else "0",
+                    f"[red]{r.open_dependabot_alerts}[/red]" if r.open_dependabot_alerts else "0",
+                )
+            console.print(tbl)
+        else:
+            console.print("[dim]No owned repositories.[/dim]")
 
 
 # ---------------------------------------------------------------------------

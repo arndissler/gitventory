@@ -183,9 +183,27 @@ These live in `inventory/` and are maintained by hand. They complement what can 
 teams:
   - id: platform-engineering      # stable slug — used as foreign key everywhere
     display_name: Platform Engineering
-    email: platform@example.com
-    slack_channel: "#platform-eng"
-    github_team_slug: platform-engineering
+    type: team                    # team | squad | chapter | guild | virtual (optional, default: team)
+    identities:                   # external identity mappings (multi-provider)
+      - provider: github_team
+        value: my-org/platform-engineering   # org/slug format
+      - provider: entraid_group
+        value: aaaabbbb-cccc-dddd-eeee-ffffffffffff
+    contacts:                     # contact channels (user-defined keys)
+      slack_channel: "#platform-eng"
+      jira_project: PLAT
+      pagerduty_schedule: P1234AB
+      email: platform@example.com
+    properties:                   # arbitrary metadata
+      cost_center: "1234"
+      location: Berlin
+
+# Old format still fully supported:
+  - id: legacy-team
+    display_name: Legacy Team
+    email: legacy@example.com
+    slack_channel: "#legacy"
+    github_team_slug: legacy-team
 ```
 
 **`inventory/aws_accounts.yaml`** — known AWS accounts:
@@ -306,6 +324,59 @@ gitventory catalog sync --clear -v   # verbose output
 
 ---
 
+## Ownership
+
+gitventory models your organization's parties (teams, squads, chapters, guilds) as `Team` entities and links them to technical artifacts (repositories, cloud accounts) via `owning_team_id`.
+
+### Multi-provider identities
+
+A team can have identities in multiple external systems simultaneously:
+
+```yaml
+teams:
+  - id: platform-engineering
+    display_name: Platform Engineering
+    type: team
+    identities:
+      - provider: github_team
+        value: my-org/platform-engineering   # used for auto-assignment
+      - provider: entraid_group
+        value: aaaabbbb-cccc-dddd-eeee-ffffffffffff
+      - provider: okta_group
+        value: 0oa1b2c3d4e5f6g7h8i9
+    contacts:
+      slack_channel: "#platform-eng"
+      jira_project: PLAT
+      pagerduty_schedule: P1234AB
+    properties:
+      cost_center: "1234"
+```
+
+Recognised `provider` values (not enforced — unknown providers are accepted):
+
+| Provider | `value` format | Description |
+|---|---|---|
+| `github_team` | `{org}/{team-slug}` | GitHub team — used for repo auto-assignment |
+| `entraid_group` | Object UUID | Microsoft Entra ID (Azure AD) group |
+| `ldap_group` | DN or group name | LDAP/Active Directory group |
+| `okta_group` | Okta group ID | Okta group |
+| `slack_usergroup` | Slack handle | Slack user group |
+
+Old-format `teams.yaml` files (with `github_team_slug`, `email`, `slack_channel` flat fields) continue to load without changes.
+
+### Auto-assignment of owning_team_id
+
+After every `collect`, gitventory automatically assigns `owning_team_id` on repositories based on GitHub team membership:
+
+1. Reads all `Team` records from the store
+2. Builds a `{org/slug → team:id}` map from `identities` where `provider == "github_team"`, with a fallback to the legacy `github_team_slug` field
+3. Calls the GitHub API to list repositories for each team
+4. Patches `owning_team_id` on repos that don't already have an owner
+
+**Explicit beats inferred** — if `owning_team_id` is already set (from YAML or catalog) it is never overwritten unless `--force` is passed to `gitventory ownership sync`.
+
+---
+
 ## Usage
 
 ### Collect
@@ -420,6 +491,33 @@ gitventory query alerts --sort-by weighted-priority
 gitventory query alerts --catalog-entity checkout-api --sort-by weighted-priority -o json
 ```
 
+### Query teams
+
+```bash
+# All teams / org parties
+gitventory query teams
+
+# Filter by party type
+gitventory query teams --type squad
+gitventory query teams -o json
+```
+
+### Ownership sync
+
+```bash
+# Assign owning_team_id from GitHub team membership
+# (runs automatically after every collect — explicit assignments are never overwritten)
+gitventory ownership sync
+
+# Overwrite existing assignments too
+gitventory ownership sync --force
+
+# Verbose output
+gitventory ownership sync -v
+```
+
+Ownership sync reads `github_team` identity entries from your `teams.yaml` and assigns `owning_team_id` on repositories that belong to each team in GitHub.  Repositories that already have an explicit owner (set via YAML or catalog) are skipped unless `--force` is passed.
+
 ### Inspect a single entity
 
 ```bash
@@ -427,7 +525,7 @@ gitventory show repo github:12345678
 gitventory show repo my-org/my-repo       # resolved by full_name
 gitventory show account aws:123456789012
 gitventory show account 123456789012      # bare account ID also accepted
-gitventory show team platform-engineering
+gitventory show team platform-engineering # shows identities, contacts, owned repos
 ```
 
 ### Store management

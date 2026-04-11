@@ -99,6 +99,10 @@ teams = Table(
     Column("slack_channel", String),
     Column("github_team_slug", String),
     Column("members", Text),          # JSON array
+    Column("type_id", String),        # team, squad, chapter, guild, …
+    Column("identities", Text),       # JSON list of {provider, value, metadata}
+    Column("contacts", Text),         # JSON dict of contact channels
+    Column("properties", Text),       # JSON dict of arbitrary metadata
     Column("raw", Text),
 )
 
@@ -223,6 +227,36 @@ _INDEXES = [
 
 
 # ---------------------------------------------------------------------------
+# Incremental migrations for existing databases
+# ---------------------------------------------------------------------------
+
+# Each entry: (table_name, column_name, column_definition)
+# Applied via ALTER TABLE … ADD COLUMN.  SQLite raises OperationalError if
+# the column already exists — we catch and ignore that so it's safe to call
+# repeatedly (idempotent).
+_TEAM_MIGRATIONS: list[tuple[str, str, str]] = [
+    ("teams", "type_id", "VARCHAR DEFAULT 'team'"),
+    ("teams", "identities", "TEXT"),
+    ("teams", "contacts", "TEXT"),
+    ("teams", "properties", "TEXT"),
+]
+
+
+def _apply_migrations(engine: Engine) -> None:
+    """Add new columns to existing tables without dropping any data."""
+    with engine.begin() as conn:
+        for table_name, col_name, col_def in _TEAM_MIGRATIONS:
+            try:
+                conn.execute(
+                    sa.text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_def}")
+                )
+                logger.debug("Migration applied: ALTER TABLE %s ADD COLUMN %s", table_name, col_name)
+            except Exception:
+                # Column already exists — SQLite raises OperationalError; safe to skip
+                pass
+
+
+# ---------------------------------------------------------------------------
 # SQLiteStore
 # ---------------------------------------------------------------------------
 
@@ -248,6 +282,8 @@ class SQLiteStore(AbstractStore):
 
     def init_schema(self) -> None:
         metadata.create_all(self._engine)
+        # Apply incremental migrations for existing databases
+        _apply_migrations(self._engine)
         # Create indexes — SQLAlchemy silently skips existing ones
         with self._engine.connect() as conn:
             for idx in _INDEXES:
@@ -275,6 +311,23 @@ class SQLiteStore(AbstractStore):
                 _upsert_row(conn, table, row)
                 count += 1
         return count
+
+    def patch(self, entity_type: type, entity_id: str, updates: dict[str, Any]) -> bool:
+        """Update specific fields on an existing entity without touching other fields.
+
+        JSON-serialisable values (dicts/lists) are automatically encoded.
+        Returns True if the entity was found, False if not found.
+        """
+        table = _TYPE_TABLE[entity_type]
+        serialised = dict(updates)
+        for key in ("identities", "contacts", "properties", "topics", "members", "tags"):
+            if key in serialised and serialised[key] is not None:
+                serialised[key] = json.dumps(serialised[key])
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                sa.update(table).where(table.c.id == entity_id).values(**serialised)
+            )
+        return result.rowcount > 0
 
     # ------------------------------------------------------------------
     # Reads
@@ -394,11 +447,14 @@ class SQLiteStore(AbstractStore):
 # Row ↔ Entity conversion helpers
 # ---------------------------------------------------------------------------
 
+_JSON_FIELDS = ("topics", "members", "tags", "properties", "identities", "contacts")
+
+
 def _entity_to_row(entity: InventoryEntity) -> dict[str, Any]:
     """Convert an InventoryEntity to a flat dict suitable for SQL insertion."""
     data = entity.model_dump(mode="python")
     # Serialise nested structures to JSON text
-    for key in ("topics", "members", "tags", "properties"):
+    for key in _JSON_FIELDS:
         if key in data and data[key] is not None:
             data[key] = json.dumps(data[key])
     if "raw" in data and data["raw"] is not None:
@@ -409,7 +465,7 @@ def _entity_to_row(entity: InventoryEntity) -> dict[str, Any]:
 def _row_to_entity(entity_type: Type[E], row: dict[str, Any]) -> E:
     """Reconstruct an InventoryEntity from a SQL row dict."""
     data = dict(row)
-    for key in ("topics", "members", "tags", "properties"):
+    for key in _JSON_FIELDS:
         if key in data and data[key] is not None:
             data[key] = json.loads(data[key])
     if "raw" in data and data["raw"] is not None:
