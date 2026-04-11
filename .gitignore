@@ -12,6 +12,7 @@ env/
 data/*.db
 data/*.json
 !data/.gitkeep
+config.yaml
 
 # Test artifacts
 .pytest_cache/
