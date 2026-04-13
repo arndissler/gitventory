@@ -8,7 +8,12 @@ from typing import Any
 from github.Repository import Repository as GHRepository
 
 from gitventory.models.ghas_alert import GhasAlert
+from gitventory.models.repo_collaborator import RepoCollaborator
+from gitventory.models.repo_team_assignment import RepoTeamAssignment
 from gitventory.models.repository import Repository
+from gitventory.models.team import ExternalIdentity, Team
+from gitventory.models.team_member import TeamMember
+from gitventory.models.user import User
 
 
 def repo_to_entity(
@@ -152,6 +157,129 @@ def dependabot_alert_to_entity(
         dismissed_reason=getattr(alert, "dismissed_reason", None),
         url=getattr(alert, "html_url", ""),
         raw={"number": number, "ghsa_id": rule_id, "severity": severity},
+    )
+
+
+def gh_team_to_entity(gh_team: Any, org: str, collected_at: datetime) -> Team:
+    """Convert a PyGithub Team object to our Team entity.
+
+    Discovered teams use ``id = "github:team:{numeric_id}"`` so that they
+    survive slug/name renames.  The GitHub identity is stored in ``identities``
+    so YAML teams can reference them via ``{provider: github_team, value: org/slug}``.
+    """
+    parent_team_id: str | None = None
+    parent = getattr(gh_team, "parent", None)
+    if parent and getattr(parent, "id", None):
+        parent_team_id = f"github:team:{parent.id}"
+
+    return Team(
+        id=f"github:team:{gh_team.id}",
+        provider_id=str(gh_team.id),
+        source_adapter="github",
+        collected_at=collected_at,
+        display_name=gh_team.name,
+        github_team_slug=gh_team.slug,
+        github_org=org,
+        parent_team_id=parent_team_id,
+        identities=[
+            ExternalIdentity(
+                provider="github_team",
+                value=f"{org}/{gh_team.slug}",
+            )
+        ],
+        raw={
+            "id": gh_team.id,
+            "name": gh_team.name,
+            "slug": gh_team.slug,
+            "org": org,
+            "privacy": getattr(gh_team, "privacy", None),
+            "permission": getattr(gh_team, "permission", None),
+        },
+    )
+
+
+def gh_user_to_entity(gh_user: Any, collected_at: datetime) -> User:
+    """Convert a PyGithub NamedUser to our User entity.
+
+    ``id = "github:user:{numeric_id}"`` — stable even if the login changes.
+    """
+    return User(
+        id=f"github:user:{gh_user.id}",
+        provider_id=str(gh_user.id),
+        provider="github",
+        source_adapter="github",
+        collected_at=collected_at,
+        login=gh_user.login,
+        display_name=getattr(gh_user, "name", None) or None,
+        avatar_url=getattr(gh_user, "avatar_url", None) or None,
+        profile_url=getattr(gh_user, "html_url", None) or None,
+        raw={"id": gh_user.id, "login": gh_user.login},
+    )
+
+
+def repo_team_assignment_to_entity(
+    repo_id: str,
+    gh_team: Any,
+    org: str,
+    permission: str,
+    collected_at: datetime,
+) -> RepoTeamAssignment:
+    """Build a RepoTeamAssignment linking a repo to a discovered GitHub team."""
+    team_id = f"github:team:{gh_team.id}"
+    rta_id = f"rta:{repo_id}::{team_id}"
+    return RepoTeamAssignment(
+        id=rta_id,
+        provider_id=rta_id,
+        source_adapter="github",
+        collected_at=collected_at,
+        repo_id=repo_id,
+        team_id=team_id,
+        permission=permission,
+        org=org,
+    )
+
+
+def repo_collaborator_to_entity(
+    repo_id: str,
+    gh_user: Any,
+    permission: str,
+    affiliation: str,
+    collected_at: datetime,
+) -> RepoCollaborator:
+    """Build a RepoCollaborator linking a user directly to a repo."""
+    user_id = f"github:user:{gh_user.id}"
+    rc_id = f"rc:{repo_id}::{user_id}::{affiliation}"
+    return RepoCollaborator(
+        id=rc_id,
+        provider_id=rc_id,
+        source_adapter="github",
+        collected_at=collected_at,
+        repo_id=repo_id,
+        user_id=user_id,
+        permission=permission,
+        affiliation=affiliation,
+    )
+
+
+def team_member_to_entity(
+    team_id: str,
+    gh_user: Any,
+    role: str,
+    org: str,
+    collected_at: datetime,
+) -> TeamMember:
+    """Build a TeamMember linking a user to a discovered GitHub team."""
+    user_id = f"github:user:{gh_user.id}"
+    tm_id = f"tm:{team_id}::{user_id}"
+    return TeamMember(
+        id=tm_id,
+        provider_id=tm_id,
+        source_adapter="github",
+        collected_at=collected_at,
+        team_id=team_id,
+        user_id=user_id,
+        role=role,
+        org=org,
     )
 
 

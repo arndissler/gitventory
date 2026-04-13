@@ -100,6 +100,24 @@ class AbstractStore(ABC):
         """Persist a collection run record for auditing."""
         ...
 
+    def delete_stale_rows(
+        self,
+        entity_type: type,
+        filter_col: str,
+        filter_val: str,
+        before: datetime,
+    ) -> int:
+        """Delete rows where ``filter_col = filter_val AND collected_at < before``.
+
+        Used to prune stale access assignments after a full-org collection.
+        Returns the number of rows deleted.
+
+        Default implementation raises NotImplementedError.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement delete_stale_rows()"
+        )
+
     # ------------------------------------------------------------------
     # Catalog
     # ------------------------------------------------------------------

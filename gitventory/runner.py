@@ -50,6 +50,7 @@ class CollectionRunner:
 
         enabled = self.config.adapters.enabled_adapters()
         results: dict[str, int] = {}
+        github_adapter = None  # held so we can call get_collected_orgs() after the run
 
         for name, adapter_cfg in enabled.items():
             if adapter_names and name not in adapter_names:
@@ -62,6 +63,8 @@ class CollectionRunner:
                 continue
 
             adapter: AbstractAdapter = adapter_cls(adapter_cfg)
+            if name == "github":
+                github_adapter = adapter
 
             if repo and not hasattr(adapter, "collect_one"):
                 logger.debug(
@@ -114,6 +117,14 @@ class CollectionRunner:
 
         if not dry_run and self.config.adapters.github and self.config.adapters.github.enabled:
             self._run_ownership_sync()
+            self._run_team_enrichment_sync()
+            if github_adapter is not None and repo is None:
+                # Full-org run: prune stale team assignments
+                self._run_stale_cleanup(github_adapter)
+
+        static_cfg = getattr(self.config.adapters, "static_yaml", None)
+        if not dry_run and static_cfg and getattr(static_cfg, "users_file", None):
+            self._run_user_enrichment_sync(static_cfg.users_file)
 
         return results
 
@@ -142,3 +153,51 @@ class CollectionRunner:
             )
         except Exception as exc:
             logger.error("Ownership sync failed: %s", exc, exc_info=True)
+
+    def _run_team_enrichment_sync(self) -> None:
+        """Copy contact info from YAML teams onto their GitHub-discovered counterparts."""
+        from gitventory.ownership.team_enrichment import TeamEnrichmentSyncer
+        try:
+            syncer = TeamEnrichmentSyncer(self.store)
+            counts = syncer.sync()
+            logger.info("Team enrichment sync: %d teams enriched", counts["teams_enriched"])
+        except Exception as exc:
+            logger.error("Team enrichment sync failed: %s", exc, exc_info=True)
+
+    def _run_user_enrichment_sync(self, users_file: str) -> None:
+        """Patch email/Slack/properties from users.yaml onto discovered User records."""
+        from gitventory.ownership.user_enrichment import UserEnrichmentSyncer
+        try:
+            syncer = UserEnrichmentSyncer(users_file, self.store)
+            counts = syncer.sync()
+            logger.info(
+                "User enrichment sync: %d enriched, %d unmatched",
+                counts["users_enriched"], counts["unmatched_logins"],
+            )
+        except Exception as exc:
+            logger.error("User enrichment sync failed: %s", exc, exc_info=True)
+
+    def _run_stale_cleanup(self, github_adapter) -> None:  # type: ignore[no-untyped-def]
+        """Delete RepoTeamAssignment rows for orgs where we just ran a full collection.
+
+        Rows with ``collected_at`` older than the org's collection start time
+        represent team access that has since been revoked.
+        """
+        from gitventory.models.repo_team_assignment import RepoTeamAssignment
+        try:
+            collected_orgs = github_adapter.get_collected_orgs()
+            total_deleted = 0
+            for org, run_start in collected_orgs.items():
+                deleted = self.store.delete_stale_rows(
+                    RepoTeamAssignment, "org", org, run_start
+                )
+                if deleted:
+                    logger.debug(
+                        "Stale cleanup: deleted %d stale RepoTeamAssignment rows for org %r",
+                        deleted, org,
+                    )
+                total_deleted += deleted
+            if total_deleted:
+                logger.info("Stale cleanup: %d stale team assignment rows removed", total_deleted)
+        except Exception as exc:
+            logger.error("Stale assignment cleanup failed: %s", exc, exc_info=True)

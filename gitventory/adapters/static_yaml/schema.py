@@ -81,3 +81,20 @@ class MappingEntry(BaseModel):
 
 class DeploymentMappingsFile(BaseModel):
     mappings: list[MappingEntry] = []
+
+
+# ---------------------------------------------------------------------------
+# users.yaml  (enrichment only — not collected by the adapter itself)
+# ---------------------------------------------------------------------------
+
+class UserEntry(BaseModel):
+    login: str
+    """GitHub login used to match against discovered User entities.  MUTABLE but
+    human-recognisable — this is the best key available without the numeric ID."""
+    email: Optional[str] = None
+    slack_handle: Optional[str] = None
+    properties: dict[str, Any] = {}
+
+
+class UsersFile(BaseModel):
+    users: list[UserEntry] = []

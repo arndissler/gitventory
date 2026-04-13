@@ -20,8 +20,13 @@ from gitventory.adapters.github.client import GitHubClient
 from gitventory.adapters.github.mappers import (
     code_scanning_alert_to_entity,
     dependabot_alert_to_entity,
+    gh_team_to_entity,
+    gh_user_to_entity,
+    repo_collaborator_to_entity,
+    repo_team_assignment_to_entity,
     repo_to_entity,
     secret_alert_to_entity,
+    team_member_to_entity,
 )
 from gitventory.adapters.github.workflow_parser import parse_workflows
 from gitventory.models.base import InventoryEntity
@@ -50,6 +55,17 @@ class GitHubAdapterConfig(AdapterConfig):
     collect_secret_scanning: bool = True
     collect_dependabot: bool = True
     parse_workflows: bool = True
+    # Team and collaborator discovery
+    collect_github_teams: bool = True
+    """Discover GitHub teams from the API and collect repo→team assignments."""
+    collect_team_members: bool = True
+    """Collect team members with their roles (requires collect_github_teams=True)."""
+    collect_collaborators: bool = False
+    """Collect direct and outside collaborators per repo (opt-in — adds ~2 API calls/repo)."""
+    collaborator_affiliation: str = "all"
+    """Collaborator affiliation filter: ``all``, ``direct``, or ``outside``."""
+    rate_limit_min_remaining: int = 100
+    """Pause collection when fewer than this many GitHub API requests remain."""
     rate_limit_sleep_seconds: float = 1.0
     per_page: int = 100
 
@@ -79,6 +95,8 @@ class GitHubAdapter(AbstractAdapter):
         super().__init__(config)
         self._collected_at = datetime.now(timezone.utc)
         self._client: Optional[GitHubClient] = None
+        self._collected_orgs: dict[str, datetime] = {}
+        """Maps org name → timestamp of when _collect_org started for that org."""
 
     def validate_connectivity(self) -> bool:
         cfg: GitHubAdapterConfig = self.config  # type: ignore[assignment]
@@ -128,6 +146,8 @@ class GitHubAdapter(AbstractAdapter):
 
     def collect(self) -> Iterator[InventoryEntity]:
         cfg: GitHubAdapterConfig = self.config  # type: ignore[assignment]
+        self._collected_at = datetime.now(timezone.utc)
+        self._collected_orgs = {}
         self._client = GitHubClient(
             auth_config=cfg.auth,
             rate_limit_sleep=cfg.rate_limit_sleep_seconds,
@@ -140,8 +160,14 @@ class GitHubAdapter(AbstractAdapter):
             self._client.close()
 
     def collect_one(self, full_name: str) -> Iterator[InventoryEntity]:
-        """Collect a single repository by its ``org/name`` full name."""
+        """Collect a single repository by its ``org/name`` full name.
+
+        Only repo-level entities are collected (RepoTeamAssignment, RepoCollaborator).
+        Org-level team and member collection is not performed — those entities are
+        only updated during a full org scan.
+        """
         cfg: GitHubAdapterConfig = self.config  # type: ignore[assignment]
+        self._collected_at = datetime.now(timezone.utc)
         self._client = GitHubClient(
             auth_config=cfg.auth,
             rate_limit_sleep=cfg.rate_limit_sleep_seconds,
@@ -153,12 +179,38 @@ class GitHubAdapter(AbstractAdapter):
         finally:
             self._client.close()
 
+    def get_collected_orgs(self) -> dict[str, datetime]:
+        """Return the orgs processed in the last ``collect()`` call with start times.
+
+        Used by the runner to scope stale-row cleanup after a full collection.
+        """
+        return dict(self._collected_orgs)
+
     # ------------------------------------------------------------------
     # Per-organisation / per-repository collection
     # ------------------------------------------------------------------
 
     def _collect_org(self, org: str) -> Iterator[InventoryEntity]:
         cfg: GitHubAdapterConfig = self.config  # type: ignore[assignment]
+        self._collected_orgs[org] = self._collected_at
+
+        # --- Phase A: Org-level team and member discovery ---
+        if cfg.collect_github_teams:
+            seen_users: set[str] = set()
+            logger.info("GitHub adapter: collecting teams for org %r", org)
+            for gh_team in self._client.list_org_teams(org):
+                yield gh_team_to_entity(gh_team, org, self._collected_at)
+
+                if cfg.collect_team_members:
+                    team_id = f"github:team:{gh_team.id}"
+                    for gh_user, role in self._client.get_team_members(org, gh_team.slug):
+                        user_id = f"github:user:{gh_user.id}"
+                        if user_id not in seen_users:
+                            seen_users.add(user_id)
+                            yield gh_user_to_entity(gh_user, self._collected_at)
+                        yield team_member_to_entity(team_id, gh_user, role, org, self._collected_at)
+
+        # --- Phase B: Per-repo collection ---
         for gh_repo in self._client.list_repos(org, include_archived=cfg.include_archived):
             yield from self._collect_repo(gh_repo)
 
@@ -202,3 +254,29 @@ class GitHubAdapter(AbstractAdapter):
             yield from parse_workflows(
                 gh_repo, repo_id, self._collected_at, self._client
             )
+
+        org = gh_repo.owner.login
+
+        # --- Repo team assignments ---
+        if cfg.collect_github_teams:
+            self._client.check_rate_limit(org, cfg.rate_limit_min_remaining)
+            for gh_team, permission in self._client.list_repo_teams(gh_repo):
+                yield repo_team_assignment_to_entity(
+                    repo_id, gh_team, org, permission, self._collected_at
+                )
+
+        # --- Direct / outside collaborators (opt-in) ---
+        if cfg.collect_collaborators:
+            self._client.check_rate_limit(org, cfg.rate_limit_min_remaining)
+            seen_collab_users: set[str] = set()
+            for gh_user, permission in self._client.list_repo_collaborators(
+                gh_repo, cfg.collaborator_affiliation
+            ):
+                user_id = f"github:user:{gh_user.id}"
+                if user_id not in seen_collab_users:
+                    seen_collab_users.add(user_id)
+                    yield gh_user_to_entity(gh_user, self._collected_at)
+                yield repo_collaborator_to_entity(
+                    repo_id, gh_user, permission, cfg.collaborator_affiliation,
+                    self._collected_at,
+                )

@@ -27,8 +27,12 @@ from gitventory.models.catalog import CatalogEntity, CatalogMembership
 from gitventory.models.cloud_account import CloudAccount
 from gitventory.models.deployment_mapping import DeploymentMapping
 from gitventory.models.ghas_alert import GhasAlert
+from gitventory.models.repo_collaborator import RepoCollaborator
+from gitventory.models.repo_team_assignment import RepoTeamAssignment
 from gitventory.models.repository import Repository
 from gitventory.models.team import Team
+from gitventory.models.team_member import TeamMember
+from gitventory.models.user import User
 from gitventory.store.base import AbstractStore
 
 logger = logging.getLogger(__name__)
@@ -176,6 +180,63 @@ catalog_memberships = Table(
     Column("matched_by", String),
 )
 
+users = Table(
+    "users",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("provider_id", String, nullable=False),
+    Column("provider", String, nullable=False),
+    Column("source_adapter", String, nullable=False),
+    Column("collected_at", DateTime(timezone=True), nullable=False),
+    Column("login", String),
+    Column("display_name", String),
+    Column("avatar_url", String),
+    Column("profile_url", String),
+    Column("email", String),
+    Column("slack_handle", String),
+    Column("properties", Text),     # JSON object
+    Column("raw", Text),
+)
+
+repo_team_assignments = Table(
+    "repo_team_assignments",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("provider_id", String, nullable=False),
+    Column("source_adapter", String, nullable=False),
+    Column("collected_at", DateTime(timezone=True), nullable=False),
+    Column("repo_id", String, nullable=False),
+    Column("team_id", String, nullable=False),
+    Column("permission", String, nullable=False),
+    Column("org", String, nullable=False),
+)
+
+repo_collaborators = Table(
+    "repo_collaborators",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("provider_id", String, nullable=False),
+    Column("source_adapter", String, nullable=False),
+    Column("collected_at", DateTime(timezone=True), nullable=False),
+    Column("repo_id", String, nullable=False),
+    Column("user_id", String, nullable=False),
+    Column("permission", String, nullable=False),
+    Column("affiliation", String, nullable=False),
+)
+
+team_members = Table(
+    "team_members",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("provider_id", String, nullable=False),
+    Column("source_adapter", String, nullable=False),
+    Column("collected_at", DateTime(timezone=True), nullable=False),
+    Column("team_id", String, nullable=False),
+    Column("user_id", String, nullable=False),
+    Column("role", String, nullable=False),
+    Column("org", String, nullable=False),
+)
+
 collection_runs = Table(
     "collection_runs",
     metadata,
@@ -197,6 +258,10 @@ _TYPE_TABLE: dict[type, Table] = {
     GhasAlert: ghas_alerts,
     CatalogEntity: catalog_entities,
     CatalogMembership: catalog_memberships,
+    User: users,
+    RepoTeamAssignment: repo_team_assignments,
+    RepoCollaborator: repo_collaborators,
+    TeamMember: team_members,
 }
 
 # ---------------------------------------------------------------------------
@@ -223,6 +288,15 @@ _INDEXES = [
     sa.Index("ix_catalog_owning_team", catalog_entities.c.owning_team_id),
     sa.Index("ix_membership_catalog_entity", catalog_memberships.c.catalog_entity_id),
     sa.Index("ix_membership_technical_entity", catalog_memberships.c.technical_entity_id),
+    sa.Index("ix_users_login", users.c.login),
+    sa.Index("ix_users_provider", users.c.provider),
+    sa.Index("ix_rta_repo", repo_team_assignments.c.repo_id),
+    sa.Index("ix_rta_team", repo_team_assignments.c.team_id),
+    sa.Index("ix_rta_org", repo_team_assignments.c.org),
+    sa.Index("ix_rc_repo", repo_collaborators.c.repo_id),
+    sa.Index("ix_rc_user", repo_collaborators.c.user_id),
+    sa.Index("ix_tm_team", team_members.c.team_id),
+    sa.Index("ix_tm_user", team_members.c.user_id),
 ]
 
 
@@ -239,6 +313,8 @@ _TEAM_MIGRATIONS: list[tuple[str, str, str]] = [
     ("teams", "identities", "TEXT"),
     ("teams", "contacts", "TEXT"),
     ("teams", "properties", "TEXT"),
+    ("teams", "parent_team_id", "VARCHAR"),
+    ("teams", "github_org", "VARCHAR"),
 ]
 
 
@@ -320,7 +396,7 @@ class SQLiteStore(AbstractStore):
         """
         table = _TYPE_TABLE[entity_type]
         serialised = dict(updates)
-        for key in ("identities", "contacts", "properties", "topics", "members", "tags"):
+        for key in _JSON_FIELDS:
             if key in serialised and serialised[key] is not None:
                 serialised[key] = json.dumps(serialised[key])
         with self._engine.begin() as conn:
@@ -328,6 +404,30 @@ class SQLiteStore(AbstractStore):
                 sa.update(table).where(table.c.id == entity_id).values(**serialised)
             )
         return result.rowcount > 0
+
+    def delete_stale_rows(
+        self,
+        entity_type: type,
+        filter_col: str,
+        filter_val: str,
+        before: datetime,
+    ) -> int:
+        """Delete rows where ``filter_col = filter_val AND collected_at < before``.
+
+        Used after a full-org collection to prune assignments for teams/users
+        that no longer have access.  Returns the number of rows deleted.
+        """
+        table = _TYPE_TABLE[entity_type]
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                sa.delete(table).where(
+                    sa.and_(
+                        getattr(table.c, filter_col) == filter_val,
+                        table.c.collected_at < before,
+                    )
+                )
+            )
+        return result.rowcount
 
     # ------------------------------------------------------------------
     # Reads

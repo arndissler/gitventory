@@ -165,6 +165,31 @@
           "title": "Parse Workflows",
           "type": "boolean"
         },
+        "collect_github_teams": {
+          "default": true,
+          "title": "Collect Github Teams",
+          "type": "boolean"
+        },
+        "collect_team_members": {
+          "default": true,
+          "title": "Collect Team Members",
+          "type": "boolean"
+        },
+        "collect_collaborators": {
+          "default": false,
+          "title": "Collect Collaborators",
+          "type": "boolean"
+        },
+        "collaborator_affiliation": {
+          "default": "all",
+          "title": "Collaborator Affiliation",
+          "type": "string"
+        },
+        "rate_limit_min_remaining": {
+          "default": 100,
+          "title": "Rate Limit Min Remaining",
+          "type": "integer"
+        },
         "rate_limit_sleep_seconds": {
           "default": 1.0,
           "title": "Rate Limit Sleep Seconds",
@@ -288,6 +313,18 @@
           ],
           "default": null,
           "title": "Deployment Mappings File"
+        },
+        "users_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Users File"
         }
       },
       "title": "StaticYamlAdapterConfig",

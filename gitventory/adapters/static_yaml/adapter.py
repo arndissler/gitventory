@@ -29,6 +29,10 @@ class StaticYamlAdapterConfig(AdapterConfig):
     teams_file: Optional[str] = None
     aws_accounts_file: Optional[str] = None
     deployment_mappings_file: Optional[str] = None
+    users_file: Optional[str] = None
+    """Path to ``users.yaml``.  Used by UserEnrichmentSyncer (post-collect), not
+    by the adapter itself — the adapter does not yield User entities because it
+    does not know the provider numeric IDs."""
 
 
 @register_adapter

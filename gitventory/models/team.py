@@ -63,3 +63,10 @@ class Team(InventoryEntity):
 
     properties: dict[str, Any] = {}
     """Arbitrary metadata, e.g. {cost_center, location, on_call_rotation}."""
+
+    # GitHub-discovered team fields (None for YAML-defined teams)
+    parent_team_id: Optional[str] = None
+    """Stable ID of the parent team for nested GitHub teams (``github:team:NNN``)."""
+
+    github_org: Optional[str] = None
+    """GitHub organisation this team belongs to.  Set for discovered teams only."""

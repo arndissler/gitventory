@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Iterator
+from typing import Any, Iterator
 
 from github import Auth, Github, GithubException, GithubIntegration
 from github.Repository import Repository as GHRepository
@@ -196,6 +196,120 @@ class GitHubClient:
                 )
                 return []
             raise
+
+    # ------------------------------------------------------------------
+    # Team and collaborator discovery
+    # ------------------------------------------------------------------
+
+    def list_org_teams(self, org: str) -> Iterator[Any]:
+        """Yield all teams in a GitHub organisation."""
+        gh = self._get_gh(org)
+        try:
+            org_obj = gh.get_organization(org)
+            for team in org_obj.get_teams():
+                self._maybe_sleep()
+                yield team
+        except GithubException as e:
+            if e.status in (403, 404):
+                logger.warning(
+                    "Cannot list teams for org %r (HTTP %d): %s", org, e.status, e.data
+                )
+                return
+            raise
+
+    def get_team_members(self, org: str, team_slug: str) -> list[tuple[Any, str]]:
+        """Return ``(user, role)`` pairs for every member of a team.
+
+        Fetches maintainers and members separately (the API does not return role
+        in a single call).  Falls back to an empty list on permission errors.
+        """
+        gh = self._get_gh(org)
+        try:
+            team = gh.get_organization(org).get_team_by_slug(team_slug)
+            result: list[tuple[Any, str]] = []
+            for user in team.get_members(role="maintainer"):
+                result.append((user, "maintainer"))
+            for user in team.get_members(role="member"):
+                result.append((user, "member"))
+            return result
+        except GithubException as e:
+            if e.status in (403, 404):
+                logger.warning(
+                    "Cannot list members for team %r in org %r (HTTP %d): %s",
+                    team_slug, org, e.status, e.data,
+                )
+                return []
+            raise
+
+    def list_repo_teams(self, repo: GHRepository) -> list[tuple[Any, str]]:
+        """Return ``(team, permission)`` pairs for every team assigned to a repo.
+
+        The ``repo.get_teams()`` API does not embed the permission level in the
+        returned objects for all PyGithub versions, so we read it from the team's
+        ``permission`` attribute (set by the API when returned in repo context).
+        """
+        try:
+            result: list[tuple[Any, str]] = []
+            for team in repo.get_teams():
+                permission = getattr(team, "permission", "pull") or "pull"
+                result.append((team, permission))
+            return result
+        except GithubException as e:
+            if e.status in (403, 404):
+                logger.debug(
+                    "Cannot list teams for repo %s (HTTP %d): %s",
+                    repo.full_name, e.status, e.data,
+                )
+                return []
+            raise
+
+    def list_repo_collaborators(
+        self, repo: GHRepository, affiliation: str = "all"
+    ) -> list[tuple[Any, str]]:
+        """Return ``(user, permission)`` pairs for collaborators on a repo.
+
+        ``affiliation`` mirrors the GitHub API parameter: ``direct``, ``outside``,
+        or ``all``.  Permission is fetched per-user via a separate API call because
+        ``get_collaborators()`` does not return the permission level directly.
+        Falls back to an empty list on permission errors.
+        """
+        try:
+            result: list[tuple[Any, str]] = []
+            for user in repo.get_collaborators(affiliation=affiliation):
+                try:
+                    perm = repo.get_collaborator_permission(user.login)
+                except GithubException:
+                    perm = "pull"
+                result.append((user, perm))
+                self._maybe_sleep()
+            return result
+        except GithubException as e:
+            if e.status in (403, 404):
+                logger.debug(
+                    "Cannot list collaborators for repo %s (HTTP %d): %s",
+                    repo.full_name, e.status, e.data,
+                )
+                return []
+            raise
+
+    def check_rate_limit(self, org: str, min_remaining: int) -> None:
+        """If fewer than *min_remaining* core API requests remain, sleep until reset.
+
+        Uses the ``GET /rate_limit`` endpoint which does not consume quota itself.
+        """
+        gh = self._get_gh(org)
+        try:
+            rate = gh.get_rate_limit().core
+            if rate.remaining < min_remaining:
+                reset_ts = rate.reset.timestamp()
+                sleep_for = max(0.0, reset_ts - time.time()) + 1.0
+                logger.info(
+                    "Rate limit low (%d remaining).  Sleeping %.0fs until reset.",
+                    rate.remaining, sleep_for,
+                )
+                time.sleep(sleep_for)
+        except GithubException as e:
+            logger.debug("Could not check rate limit: %s", e)
 
     def _maybe_sleep(self) -> None:
         if self._rate_limit_sleep > 0:

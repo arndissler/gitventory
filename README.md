@@ -20,8 +20,10 @@ gitventory **collects metadata** from multiple sources via pluggable adapters an
 ```
 config.yaml
     │
-    ├─► GitHubAdapter          Repos, GHAS alerts, OIDC workflow parser
-    ├─► StaticYamlAdapter      Teams, AWS accounts, manual deployment mappings
+    ├─► GitHubAdapter          Repos, teams, team members, collaborators,
+    │                          GHAS alerts, OIDC workflow parser
+    ├─► StaticYamlAdapter      AWS accounts, manual deployment mappings,
+    │                          team enrichment (teams.yaml), user enrichment (users.yaml)
     └─► (future adapters)      AWS Organizations, Azure, Azure DevOps, Kubernetes
               │
               ▼
@@ -51,9 +53,11 @@ Every entity has a **provider-namespaced stable ID** that survives renames and t
 | Entity | Stable ID format | Example |
 |---|---|---|
 | GitHub repository | `github:{numeric_repo_id}` | `github:12345678` |
+| GitHub team (discovered) | `github:team:{numeric_team_id}` | `github:team:9876` |
+| GitHub user (discovered) | `github:user:{numeric_user_id}` | `github:user:111222` |
 | AWS account | `aws:{account_id}` | `aws:123456789012` |
 | Azure subscription | `azure:{subscription_uuid}` | `azure:aaaa-bbbb-...` |
-| Team | `team:{slug}` | `team:platform-engineering` |
+| Team (YAML-defined) | `team:{slug}` | `team:platform-engineering` |
 
 If you rename `my-org/old-name` to `my-org/new-name`, all deployment mappings and alerts remain linked. The `full_name` field is a mutable display label updated on every collect run.
 
@@ -107,12 +111,18 @@ adapters:
       - my-org
     collect_ghas_alerts: true
     parse_workflows: true                              # auto-detect OIDC repo→AWS links
+    collect_github_teams: true                         # discover teams + repo assignments
+    collect_team_members: true                         # collect team members with roles
+    collect_collaborators: false                       # direct/outside collaborators (opt-in)
+    collaborator_affiliation: all                      # all | direct | outside
+    rate_limit_min_remaining: 100                      # pause when fewer requests remain
 
   static_yaml:
     enabled: true
     teams_file: "./inventory/teams.yaml"
     aws_accounts_file: "./inventory/aws_accounts.yaml"
     deployment_mappings_file: "./inventory/deployment_mappings.yaml"
+    users_file: "./inventory/users.yaml"      # optional — enriches discovered users
 ```
 
 See [`config.example.yaml`](config.example.yaml) for the full reference including all three auth modes.
@@ -156,6 +166,7 @@ Create one token per org at **Settings → Developer settings → Personal acces
 |---|---|---|
 | **Contents** | Read | Listing repos, reading workflow files (OIDC detection) |
 | **Metadata** | Read | Repo metadata — always required by the API |
+| **Members** | Read | `collect_github_teams: true` (team and member discovery) |
 | **Secret scanning alerts** | Read | `collect_secret_scanning: true` |
 | **Code scanning alerts** | Read | `collect_ghas_alerts: true` |
 
@@ -229,6 +240,18 @@ mappings:
     deploy_method: codedeploy
     environment: prod
 ```
+
+**`inventory/users.yaml`** — contact info for discovered users (optional enrichment):
+```yaml
+users:
+  - login: alice                      # GitHub login — matched against discovered users
+    email: alice@example.com
+    slack_handle: "@alice"
+    properties:
+      on_call: true
+```
+
+GitHub does not expose email addresses for most users. This file is the manual enrichment path: after `gitventory collect` discovers users from team membership and collaborator lists, the syncer patches email, Slack handle, and properties onto their records using `login` as the match key.
 
 **`inventory/catalog.yaml`** — organizational meta-model (see [catalog section](#catalog) below):
 ```yaml
@@ -325,6 +348,18 @@ gitventory catalog sync --clear -v   # verbose output
 ```
 
 ---
+
+## Team and user discovery
+
+When `collect_github_teams: true` (the default), the GitHub adapter discovers teams and users directly from the GitHub API and stores them alongside your YAML-defined records:
+
+- **`github:team:{id}`** — GitHub team with its slug, parent (for nested teams), and org
+- **`github:user:{id}`** — user with login and display name (email enriched from `users.yaml`)
+- **`RepoTeamAssignment`** — team → repo link with permission level (`pull/triage/push/maintain/admin`)
+- **`TeamMember`** — user → team link with role (`maintainer/member`)
+- **`RepoCollaborator`** — direct/outside collaborator on a repo (opt-in, `collect_collaborators: true`)
+
+After collection, a post-collect **TeamEnrichmentSyncer** copies contact info (email, Slack, contacts, properties) from your YAML-defined `team:slug` records onto the matching `github:team:NNN` records, using the `github_team` identity link. This means you get the full picture — GitHub-accurate membership + your org's contact metadata — in a single team record.
 
 ## Ownership
 
@@ -504,6 +539,48 @@ gitventory query teams --type squad
 gitventory query teams -o json
 ```
 
+### Query discovered users
+
+```bash
+# All discovered users
+gitventory query users
+
+# Members of a specific team (use discovered ID or YAML slug)
+gitventory query users --team github:team:9876
+gitventory query users --team platform-engineering
+
+# Collaborators on a specific repository
+gitventory query users --repo my-org/my-repo
+
+# Find a specific user by login
+gitventory query users --login alice
+```
+
+### Query team assignments per repository
+
+```bash
+# All teams with access to a repository (and their permission levels)
+gitventory query repo-teams my-org/my-repo
+gitventory query repo-teams github:12345678
+
+# Filter by permission level
+gitventory query repo-teams my-org/my-repo --permission admin
+gitventory query repo-teams my-org/my-repo --permission maintain
+```
+
+### Query collaborators per repository
+
+```bash
+# All direct and outside collaborators on a repository
+gitventory query collaborators my-org/my-repo
+
+# Only direct org-member collaborators
+gitventory query collaborators my-org/my-repo --affiliation direct
+
+# Only outside collaborators
+gitventory query collaborators my-org/my-repo --affiliation outside
+```
+
 ### Ownership sync
 
 ```bash
@@ -524,10 +601,17 @@ Ownership sync reads `github_team` identity entries from your `teams.yaml` and a
 
 ```bash
 gitventory show repo github:12345678
-gitventory show repo my-org/my-repo       # resolved by full_name
+gitventory show repo my-org/my-repo         # resolved by full_name
+
+# show account: displays deploying repos, responsible teams (with email/Slack),
+# and key contacts (team maintainers with email if enriched via users.yaml)
 gitventory show account aws:123456789012
-gitventory show account 123456789012      # bare account ID also accepted
-gitventory show team platform-engineering # shows identities, contacts, owned repos
+gitventory show account 123456789012        # bare account ID also accepted
+
+# show team: displays identity mappings, contact channels, team members
+# (login, role, email), and owned repositories
+gitventory show team platform-engineering   # YAML-defined team
+gitventory show team github:team:9876       # GitHub-discovered team
 ```
 
 ### Store management
@@ -555,20 +639,27 @@ gitventory adapters list
 ## Data model
 
 ```
-Team ──< CloudAccount       (owning_team_id)
-Team ──< Repository         (owning_team_id)
-Repository ──< GhasAlert    (repo_id  →  stable github:NNN)
-Repository ──< DeploymentMapping
-DeploymentMapping >── CloudAccount
+Team ──< CloudAccount              (owning_team_id)
+Team ──< Repository                (owning_team_id)
+Team ──< RepoTeamAssignment        (team_id, permission)
+Team ──< TeamMember >── User       (team_id, user_id, role)
+Repository ──< GhasAlert           (repo_id)
+Repository ──< DeploymentMapping >── CloudAccount
+Repository ──< RepoTeamAssignment  (repo_id, permission)
+Repository ──< RepoCollaborator >── User  (repo_id, user_id, permission, affiliation)
 ```
 
-| Entity | Key fields |
-|---|---|
-| `Repository` | `provider`, `full_name` (mutable), `language`, `topics`, `visibility`, `is_archived`, `last_push_at`, GHAS alert counts, `owning_team_id` |
-| `CloudAccount` | `provider` (aws/azure), `name`, `environment`, `ou_path`, `owning_team_id`, `tags` |
-| `Team` | `display_name`, `email`, `slack_channel`, `github_team_slug` |
-| `DeploymentMapping` | `repo_id`, `target_id`, `deploy_method`, `environment`, `detection_method` |
-| `GhasAlert` | `alert_type`, `state`, `severity`, `secret_type`, `rule_id` |
+| Entity | Stable ID | Key fields |
+|---|---|---|
+| `Repository` | `github:{id}` | `full_name` (mutable), `language`, `topics`, `visibility`, `is_archived`, GHAS alert counts, `owning_team_id` |
+| `CloudAccount` | `aws:{id}` / `azure:{id}` | `name`, `environment`, `ou_path`, `owning_team_id`, `tags` |
+| `Team` | `team:{slug}` or `github:team:{id}` | `display_name`, `email`, `slack_channel`, `identities`, `contacts`, `properties`, `parent_team_id` |
+| `User` | `github:user:{id}` | `login`, `display_name`, `email` (enriched), `slack_handle` (enriched) |
+| `RepoTeamAssignment` | `rta:{repo_id}::{team_id}` | `repo_id`, `team_id`, `permission`, `org` |
+| `RepoCollaborator` | `rc:{repo_id}::{user_id}::{affiliation}` | `repo_id`, `user_id`, `permission`, `affiliation` |
+| `TeamMember` | `tm:{team_id}::{user_id}` | `team_id`, `user_id`, `role` (maintainer/member) |
+| `DeploymentMapping` | `{repo_id}::{target_id}::{env}` | `repo_id`, `target_id`, `deploy_method`, `detection_method` |
+| `GhasAlert` | `{repo_id}::alert::{type}::{number}` | `alert_type`, `state`, `severity`, `secret_type`, `rule_id` |
 
 ---
 
@@ -619,8 +710,8 @@ pytest tests/integration/
 
 | Adapter | Status | Description |
 |---|---|---|
-| `github` | Done | Repos, GHAS alerts, OIDC workflow parser |
-| `static_yaml` | Done | Teams, AWS accounts, manual mappings |
+| `github` | Done | Repos, teams, team members, collaborators, GHAS alerts, OIDC workflow parser |
+| `static_yaml` | Done | AWS accounts, manual mappings, team/user enrichment YAML |
 | `aws_orgs` | Planned | AWS Organizations — OUs, account IDs, tags |
 | `azuredevops` | Planned | Azure DevOps repositories |
 | `azure` | Planned | Azure subscriptions and resource groups |

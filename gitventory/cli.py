@@ -358,6 +358,197 @@ def query_mappings(
     _output(results, cols, output_fmt, "Deployment Mappings")
 
 
+@query.command("users")
+@click.option("--team", "team_id", default=None, help="Filter by team ID (github:team:NNN or team:slug).")
+@click.option("--repo", "repo_id", default=None, help="Filter by repository ID — shows collaborators on that repo.")
+@click.option("--login", default=None, help="Filter by login (exact match).")
+@click.option("-o", "--output", "output_fmt", default="table", type=click.Choice(["table", "json"]), show_default=True)
+@click.pass_context
+def query_users(
+    ctx: click.Context,
+    team_id: Optional[str],
+    repo_id: Optional[str],
+    login: Optional[str],
+    output_fmt: str,
+) -> None:
+    """List discovered users, optionally filtered by team or repo."""
+    from gitventory.models.user import User
+    from gitventory.models.team_member import TeamMember
+    from gitventory.models.repo_collaborator import RepoCollaborator
+
+    config = _load_config(ctx)
+    with create_store(config.store) as store:
+        if team_id:
+            # Resolve short form
+            if not team_id.startswith(("team:", "github:")):
+                team_id = f"team:{team_id}"
+            member_rows = store.query(TeamMember, {"team_id": team_id})
+            user_ids = {m.user_id for m in member_rows}
+            all_users = [store.get(User, uid) for uid in user_ids]
+            users = [u for u in all_users if u]
+        elif repo_id:
+            collab_rows = store.query(RepoCollaborator, {"repo_id": repo_id})
+            user_ids = {c.user_id for c in collab_rows}
+            all_users = [store.get(User, uid) for uid in user_ids]
+            users = [u for u in all_users if u]
+        else:
+            filters: dict = {}
+            if login:
+                filters["login"] = login
+            users = store.query(User, filters)
+
+    if login and not team_id and not repo_id:
+        users = [u for u in users if u.login == login]
+
+    if not users:
+        console.print("[dim]No users found.[/dim]")
+        return
+
+    cols = ["id", "login", "display_name", "email", "slack_handle", "provider"]
+    _output(users, cols, output_fmt, "Users")
+
+
+@query.command("repo-teams")
+@click.argument("repo_id")
+@click.option("--permission", default=None,
+              type=click.Choice(["pull", "triage", "push", "maintain", "admin"]),
+              help="Filter by permission level.")
+@click.option("-o", "--output", "output_fmt", default="table", type=click.Choice(["table", "json"]), show_default=True)
+@click.pass_context
+def query_repo_teams(
+    ctx: click.Context,
+    repo_id: str,
+    permission: Optional[str],
+    output_fmt: str,
+) -> None:
+    """List teams assigned to a repository with their permission levels."""
+    from gitventory.models.repo_team_assignment import RepoTeamAssignment
+    from gitventory.models.team import Team
+
+    config = _load_config(ctx)
+    with create_store(config.store) as store:
+        # Normalise repo_id
+        if not repo_id.startswith("github:") and "/" in repo_id:
+            repo = _resolve_repo(store, repo_id)
+            if repo:
+                repo_id = repo.id
+
+        filters: dict = {"repo_id": repo_id}
+        assignments = store.query(RepoTeamAssignment, filters)
+        if permission:
+            assignments = [a for a in assignments if a.permission == permission]
+
+        # Enrich with team display names
+        rows = []
+        for a in assignments:
+            team = store.get(Team, a.team_id)
+            rows.append({
+                "id": a.id,
+                "repo_id": a.repo_id,
+                "team_id": a.team_id,
+                "team_name": (team.display_name if team else None) or a.team_id,
+                "permission": a.permission,
+                "org": a.org,
+                "email": (team.email if team else None) or "",
+                "slack": (team.slack_channel if team else None) or (team.contacts.get("slack_channel") if team else None) or "",
+            })
+
+    if not rows:
+        console.print("[dim]No team assignments found for this repository.[/dim]")
+        return
+
+    if output_fmt == "json":
+        console.print_json(json.dumps(rows))
+        return
+
+    import rich.table as rt
+    tbl = rt.Table(title=f"Team Assignments for {repo_id}")
+    tbl.add_column("Team")
+    tbl.add_column("Permission")
+    tbl.add_column("Email")
+    tbl.add_column("Slack")
+    tbl.add_column("Org")
+    for row in rows:
+        perm = row["permission"]
+        perm_fmt = f"[bold red]{perm}[/bold red]" if perm == "admin" else (
+            f"[yellow]{perm}[/yellow]" if perm == "maintain" else perm
+        )
+        tbl.add_row(
+            row["team_name"], perm_fmt,
+            row["email"] or "[dim]—[/dim]",
+            row["slack"] or "[dim]—[/dim]",
+            row["org"],
+        )
+    console.print(tbl)
+
+
+@query.command("collaborators")
+@click.argument("repo_id")
+@click.option("--affiliation", default=None,
+              type=click.Choice(["direct", "outside", "all"]),
+              help="Filter by collaborator affiliation.")
+@click.option("-o", "--output", "output_fmt", default="table", type=click.Choice(["table", "json"]), show_default=True)
+@click.pass_context
+def query_collaborators(
+    ctx: click.Context,
+    repo_id: str,
+    affiliation: Optional[str],
+    output_fmt: str,
+) -> None:
+    """List direct and outside collaborators on a repository."""
+    from gitventory.models.repo_collaborator import RepoCollaborator
+    from gitventory.models.user import User
+
+    config = _load_config(ctx)
+    with create_store(config.store) as store:
+        if not repo_id.startswith("github:") and "/" in repo_id:
+            repo = _resolve_repo(store, repo_id)
+            if repo:
+                repo_id = repo.id
+
+        filters: dict = {"repo_id": repo_id}
+        collabs = store.query(RepoCollaborator, filters)
+        if affiliation:
+            collabs = [c for c in collabs if c.affiliation == affiliation]
+
+        rows = []
+        for c in collabs:
+            user = store.get(User, c.user_id)
+            rows.append({
+                "id": c.id,
+                "repo_id": c.repo_id,
+                "user_id": c.user_id,
+                "login": (user.login if user else None) or c.user_id,
+                "permission": c.permission,
+                "affiliation": c.affiliation,
+                "email": (user.email if user else None) or "",
+                "slack_handle": (user.slack_handle if user else None) or "",
+            })
+
+    if not rows:
+        console.print("[dim]No collaborators found for this repository.[/dim]")
+        return
+
+    if output_fmt == "json":
+        console.print_json(json.dumps(rows))
+        return
+
+    import rich.table as rt
+    tbl = rt.Table(title=f"Collaborators for {repo_id}")
+    tbl.add_column("Login")
+    tbl.add_column("Permission")
+    tbl.add_column("Affiliation")
+    tbl.add_column("Email")
+    tbl.add_column("Slack")
+    for row in rows:
+        tbl.add_row(
+            row["login"], row["permission"], row["affiliation"],
+            row["email"] or "[dim]—[/dim]",
+            row["slack_handle"] or "[dim]—[/dim]",
+        )
+    console.print(tbl)
+
+
 # ---------------------------------------------------------------------------
 # catalog group
 # ---------------------------------------------------------------------------
@@ -544,22 +735,97 @@ def show_catalog(ctx: click.Context, entity_id: str) -> None:
 @click.argument("account_id")
 @click.pass_context
 def show_account(ctx: click.Context, account_id: str) -> None:
-    """Show full details for a cloud account (accepts stable ID or bare account ID)."""
-    from gitventory.models import CloudAccount
+    """Show full details for a cloud account including deploying repos, responsible teams,
+    and key contacts.
+
+    Accepts a stable ID (aws:123456789012) or a bare account ID (123456789012).
+    """
+    from gitventory.models import CloudAccount, DeploymentMapping, Repository
+    from gitventory.models.repo_team_assignment import RepoTeamAssignment
+    from gitventory.models.team_member import TeamMember
+    from gitventory.models.team import Team
+    from gitventory.models.user import User
+    import rich.table as rt
 
     config = _load_config(ctx)
-    # Normalise: accept "123456789012" as well as "aws:123456789012"
     if not account_id.startswith(("aws:", "azure:")):
         account_id = f"aws:{account_id}"
 
     with create_store(config.store) as store:
         entity = store.get(CloudAccount, account_id)
+        if entity is None:
+            err_console.print(f"[red]Account not found:[/red] {account_id}")
+            sys.exit(1)
 
-    if entity is None:
-        err_console.print(f"[red]Account not found:[/red] {account_id}")
-        sys.exit(1)
+        _print_detail(entity)
 
-    _print_detail(entity)
+        # Deploying repositories
+        mappings = store.query(DeploymentMapping, {"target_id": account_id})
+        if not mappings:
+            console.print("[dim]No known deployment mappings to this account.[/dim]")
+            return
+
+        repo_ids = list({m.repo_id for m in mappings if m.repo_id})
+        repos = [store.get(Repository, rid) for rid in repo_ids]
+        repos = [r for r in repos if r]
+
+        if repos:
+            tbl = rt.Table(title=f"Deploying Repositories ({len(repos)})")
+            tbl.add_column("Repository")
+            tbl.add_column("Method")
+            tbl.add_column("Environment")
+            for r in repos:
+                rel_mappings = [m for m in mappings if m.repo_id == r.id]
+                methods = ", ".join({m.deploy_method or "—" for m in rel_mappings})
+                envs = ", ".join({m.environment or "—" for m in rel_mappings})
+                tbl.add_row(r.full_name or r.id, methods, envs)
+            console.print(tbl)
+
+        # Responsible teams (admin/maintain permission on deploying repos)
+        responsible_team_ids: set[str] = set()
+        for r in repos:
+            rtas = store.query(RepoTeamAssignment, {"repo_id": r.id})
+            for rta in rtas:
+                if rta.permission in ("admin", "maintain"):
+                    responsible_team_ids.add(rta.team_id)
+
+        if responsible_team_ids:
+            tbl2 = rt.Table(title=f"Responsible Teams ({len(responsible_team_ids)})")
+            tbl2.add_column("Team")
+            tbl2.add_column("Email")
+            tbl2.add_column("Slack")
+            for team_id in sorted(responsible_team_ids):
+                team = store.get(Team, team_id)
+                if team is None:
+                    tbl2.add_row(team_id, "[dim]—[/dim]", "[dim]—[/dim]")
+                    continue
+                email = team.email or team.contacts.get("email") or "[dim]—[/dim]"
+                slack = team.slack_channel or team.contacts.get("slack_channel") or "[dim]—[/dim]"
+                tbl2.add_row(team.display_name or team_id, email, slack)
+            console.print(tbl2)
+
+            # Key contacts (team maintainers with email)
+            contacts: list[tuple[str, str, str, str]] = []  # (team_name, login, role, email)
+            for team_id in sorted(responsible_team_ids):
+                team = store.get(Team, team_id)
+                team_name = (team.display_name if team else None) or team_id
+                members = store.query(TeamMember, {"team_id": team_id})
+                for m in members:
+                    if m.role == "maintainer":
+                        user = store.get(User, m.user_id)
+                        login = (user.login if user else None) or m.user_id
+                        email = (user.email if user else None) or "[dim]—[/dim]"
+                        contacts.append((team_name, login, m.role, email))
+
+            if contacts:
+                tbl3 = rt.Table(title=f"Key Contacts ({len(contacts)})")
+                tbl3.add_column("Team")
+                tbl3.add_column("Login")
+                tbl3.add_column("Role")
+                tbl3.add_column("Email")
+                for team_name, login, role, email in contacts:
+                    tbl3.add_row(team_name, login, role, email)
+                console.print(tbl3)
 
 
 @show.command("team")
@@ -570,7 +836,7 @@ def show_team(ctx: click.Context, team_id: str) -> None:
     from gitventory.models import Repository, Team
 
     config = _load_config(ctx)
-    if not team_id.startswith("team:"):
+    if not team_id.startswith(("team:", "github:team:")):
         team_id = f"team:{team_id}"
 
     with create_store(config.store) as store:
@@ -601,6 +867,24 @@ def show_team(ctx: click.Context, team_id: str) -> None:
             tbl.add_column("Value")
             for channel, value in entity.contacts.items():
                 tbl.add_row(channel, value)
+            console.print(tbl)
+
+        # Show team members (available for GitHub-discovered teams)
+        from gitventory.models.team_member import TeamMember
+        from gitventory.models.user import User
+        members = store.query(TeamMember, {"team_id": entity.id})
+        if members:
+            import rich.table as rt
+            tbl = rt.Table(title=f"Team Members ({len(members)})")
+            tbl.add_column("Login")
+            tbl.add_column("Role")
+            tbl.add_column("Email")
+            for m in sorted(members, key=lambda x: (x.role, x.user_id)):
+                user = store.get(User, m.user_id)
+                login = (user.login if user else None) or m.user_id
+                email = (user.email if user else None) or "[dim]—[/dim]"
+                role_fmt = f"[bold]{m.role}[/bold]" if m.role == "maintainer" else m.role
+                tbl.add_row(login, role_fmt, email)
             console.print(tbl)
 
         # Show linked repositories (repos where owning_team_id == team.id)
