@@ -68,10 +68,12 @@ git clone https://github.com/your-org/gitventory
 cd gitventory
 
 python -m venv .venv
-# Windows:
-.venv\Scripts\pip install -e .
-# macOS / Linux:
-.venv/bin/pip install -e .
+
+# Activate
+.venv\Scripts\activate     # Windows
+source .venv/bin/activate  # macOS / Linux
+
+pip install -e .
 ```
 
 Copy the example config and fill in your values:
@@ -604,8 +606,7 @@ Adapters never interact with the store directly — they only yield entities.
 
 ```bash
 # Run all tests
-.venv/Scripts/pytest tests/ -v           # Windows
-.venv/bin/pytest tests/ -v               # macOS / Linux
+pytest tests/ -v
 
 # Run only unit tests (no filesystem/DB)
 pytest tests/unit/
