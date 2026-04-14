@@ -68,6 +68,16 @@ except ImportError as e:
     print(f"  skipping deployment_mappings: {e}")
 
 try:
+    from gitventory.adapters.static_yaml.schema import UsersFile
+    SCHEMAS.append((
+        "users",
+        UsersFile,
+        "Schema for inventory/users.yaml — contact info enrichment for discovered users.",
+    ))
+except ImportError as e:
+    print(f"  skipping users: {e}")
+
+try:
     from gitventory.catalog.schema import CatalogFile
     SCHEMAS.append((
         "catalog",
@@ -98,6 +108,7 @@ _VSCODE_YAML_SCHEMAS: dict[str, list[str]] = {
     "./schemas/teams.schema.json":              ["inventory/teams.yaml", "inventory/teams.*.yaml"],
     "./schemas/aws_accounts.schema.json":       ["inventory/aws_accounts.yaml", "inventory/aws_accounts.*.yaml"],
     "./schemas/deployment_mappings.schema.json":["inventory/deployment_mappings.yaml"],
+    "./schemas/users.schema.json":              ["inventory/users.yaml", "inventory/users.*.yaml"],
     "./schemas/catalog.schema.json":            ["inventory/catalog.yaml", "inventory/catalog.example.yaml"],
     "./schemas/config.schema.json":             ["config.yaml", "config.*.yaml"],
 }

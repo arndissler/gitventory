@@ -1,0 +1,91 @@
+{
+  "$defs": {
+    "UserEntry": {
+      "description": "One enrichment record in ``users.yaml``.\n\nExactly one of ``user``, ``id``, or ``login`` must be provided:\n\n``user``\n    Login-based reference.  Accepts a bare login (``alice``) or a\n    provider-scoped login (``github:user:alice``).  Always resolved via a\n    ``User.login`` lookup.  Use the provider-scoped form when you have users\n    from multiple providers with the same login name.\n\n``id``\n    Stable ID reference \u2014 the exact value stored in the database as\n    ``User.id``, e.g. ``github:user:12345678``.  Resolved via an exact\n    ``User.id`` match.  Use this when you need long-term stability even if\n    the user renames their account.\n\n``login``\n    **Deprecated.** Treated identically to a bare ``user:`` value.  Kept so\n    that existing ``users.yaml`` files continue to work without changes.",
+      "properties": {
+        "user": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "login": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Login"
+        },
+        "email": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Email"
+        },
+        "slack_handle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Slack Handle"
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": true,
+          "default": {},
+          "title": "Properties"
+        }
+      },
+      "title": "UserEntry",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "users": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/UserEntry"
+      },
+      "title": "Users",
+      "type": "array"
+    }
+  },
+  "title": "UsersFile",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Schema for inventory/users.yaml \u2014 contact info enrichment for discovered users."
+}

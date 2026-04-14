@@ -244,14 +244,43 @@ mappings:
 **`inventory/users.yaml`** — contact info for discovered users (optional enrichment):
 ```yaml
 users:
-  - login: alice                      # GitHub login — matched against discovered users
+  # Bare login — matched against User.login for any provider.
+  # Convenient but weakest: login names can change and are not provider-scoped.
+  # If the same login exists in multiple providers a warning is logged.
+  - user: alice
     email: alice@example.com
     slack_handle: "@alice"
     properties:
       on_call: true
+
+  # Provider-scoped login — matched against provider AND login.
+  # Recommended when multiple providers are in use.
+  - user: github:user:bob
+    email: bob@example.com
+
+  # Stable numeric ID — exact match against User.id in the database.
+  # Survives login renames; use this for long-term correctness.
+  - id: github:user:12345678
+    email: charlie@example.com
+    slack_handle: "@charlie"
+
+  # Deprecated: 'login:' is a backwards-compatible alias for 'user:'.
+  # Existing files continue to work without changes.
+  - login: legacy-user
+    email: legacy@example.com
 ```
 
-GitHub does not expose email addresses for most users. This file is the manual enrichment path: after `gitventory collect` discovers users from team membership and collaborator lists, the syncer patches email, Slack handle, and properties onto their records using `login` as the match key.
+GitHub does not expose email addresses for most users. This file is the manual enrichment path: after `gitventory collect` discovers users from team membership and collaborator lists, the syncer patches email, Slack handle, and properties onto their records.
+
+Three match key formats are supported, in order of increasing stability:
+
+| Field | Example | How it resolves |
+|---|---|---|
+| `user: alice` | bare login | match `User.login == "alice"` (any provider) |
+| `user: github:user:alice` | provider-scoped login | match `User.provider == "github"` AND `User.login == "alice"` |
+| `id: github:user:12345678` | stable numeric ID | exact `User.id` lookup — survives renames |
+
+The `login:` field is a deprecated alias for `user:` kept for backwards compatibility.
 
 **`inventory/catalog.yaml`** — organizational meta-model (see [catalog section](#catalog) below):
 ```yaml

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -88,12 +88,44 @@ class DeploymentMappingsFile(BaseModel):
 # ---------------------------------------------------------------------------
 
 class UserEntry(BaseModel):
-    login: str
-    """GitHub login used to match against discovered User entities.  MUTABLE but
-    human-recognisable — this is the best key available without the numeric ID."""
+    """One enrichment record in ``users.yaml``.
+
+    Exactly one of ``user``, ``id``, or ``login`` must be provided:
+
+    ``user``
+        Login-based reference.  Accepts a bare login (``alice``) or a
+        provider-scoped login (``github:user:alice``).  Always resolved via a
+        ``User.login`` lookup.  Use the provider-scoped form when you have users
+        from multiple providers with the same login name.
+
+    ``id``
+        Stable ID reference — the exact value stored in the database as
+        ``User.id``, e.g. ``github:user:12345678``.  Resolved via an exact
+        ``User.id`` match.  Use this when you need long-term stability even if
+        the user renames their account.
+
+    ``login``
+        **Deprecated.** Treated identically to a bare ``user:`` value.  Kept so
+        that existing ``users.yaml`` files continue to work without changes.
+    """
+
+    user: Optional[str] = None
+    id: Optional[str] = None
+    login: Optional[str] = None   # legacy alias for user:
     email: Optional[str] = None
     slack_handle: Optional[str] = None
     properties: dict[str, Any] = {}
+
+    @model_validator(mode="after")
+    def check_ref(self) -> "UserEntry":
+        # Migrate legacy login: → user: silently
+        if self.login and not self.user:
+            self.user = self.login
+        if not self.user and not self.id:
+            raise ValueError("One of 'user', 'id', or 'login' must be set in each users.yaml entry")
+        if self.user and self.id:
+            raise ValueError("Only one of 'user' or 'id' may be set per entry, not both")
+        return self
 
 
 class UsersFile(BaseModel):
