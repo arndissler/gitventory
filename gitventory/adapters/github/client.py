@@ -299,13 +299,13 @@ class GitHubClient:
         """
         gh = self._get_gh(org)
         try:
-            rate = gh.get_rate_limit().core
-            if rate.remaining < min_remaining:
-                reset_ts = rate.reset.timestamp()
+            remaining, _ = gh.rate_limiting
+            if remaining < min_remaining:
+                reset_ts = gh.rate_limiting_resettime
                 sleep_for = max(0.0, reset_ts - time.time()) + 1.0
                 logger.info(
                     "Rate limit low (%d remaining).  Sleeping %.0fs until reset.",
-                    rate.remaining, sleep_for,
+                    remaining, sleep_for,
                 )
                 time.sleep(sleep_for)
         except GithubException as e:
