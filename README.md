@@ -77,7 +77,7 @@ python -m venv .venv
 .venv\Scripts\activate     # Windows
 source .venv/bin/activate  # macOS / Linux
 
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 Copy the example config and fill in your values:
