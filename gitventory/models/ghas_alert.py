@@ -26,7 +26,7 @@ class GhasAlert(InventoryEntity):
     number: int
     """Alert number within the repository (as returned by the GitHub API)."""
 
-    state: Literal["open", "dismissed", "fixed", "auto_dismissed"] = "open"
+    state: Literal["open", "dismissed", "fixed", "auto_dismissed", "resolved"] = "open"
 
     severity: Optional[str] = None
     """``"critical"`` | ``"high"`` | ``"medium"`` | ``"low"`` | ``"warning"`` | ``"note"``"""

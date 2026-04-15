@@ -257,7 +257,7 @@ def query_accounts(
 @click.option("--severity", default=None, help="Filter by severity (critical, high, medium, low).")
 @click.option("--repo", "repo_id", default=None, help="Filter by repository ID or full_name slug.")
 @click.option("--catalog-entity", "catalog_entity", default=None, help="Filter by catalog entity slug or stable ID.")
-@click.option("--state", default="open", type=click.Choice(["open", "dismissed", "fixed", "all"]), show_default=True)
+@click.option("--state", default="open", type=click.Choice(["open", "dismissed", "fixed", "resolved", "all"]), show_default=True)
 @click.option("--sort-by", "sort_by", default=None, type=click.Choice(["weighted-priority"]), help="Sort results.")
 @click.option("-o", "--output", "output_fmt", default="table", type=click.Choice(["table", "json"]), show_default=True)
 @click.pass_context
