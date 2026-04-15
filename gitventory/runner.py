@@ -172,7 +172,7 @@ class CollectionRunner:
             counts = syncer.sync()
             logger.info(
                 "User enrichment sync: %d enriched, %d unmatched",
-                counts["users_enriched"], counts["unmatched_logins"],
+                counts["users_enriched"], counts["unmatched_refs"],
             )
         except Exception as exc:
             logger.error("User enrichment sync failed: %s", exc, exc_info=True)

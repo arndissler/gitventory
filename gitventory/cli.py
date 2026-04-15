@@ -646,6 +646,109 @@ def ownership_sync(ctx: click.Context, force: bool, verbose: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# sync — re-run all post-collect steps without touching adapters
+# ---------------------------------------------------------------------------
+
+@main.command("sync")
+@click.option("--catalog/--no-catalog", default=True, show_default=True,
+              help="Run catalog sync.")
+@click.option("--ownership/--no-ownership", default=True, show_default=True,
+              help="Run ownership sync.")
+@click.option("--teams/--no-teams", default=True, show_default=True,
+              help="Run team enrichment.")
+@click.option("--users/--no-users", default=True, show_default=True,
+              help="Run user enrichment.")
+@click.option("-v", "--verbose", is_flag=True, help="Enable DEBUG logging.")
+@click.pass_context
+def sync_cmd(ctx: click.Context, catalog: bool, ownership: bool, teams: bool, users: bool, verbose: bool) -> None:
+    """Re-apply YAML enrichment without re-collecting from adapters.
+
+    Runs catalog sync, ownership sync, team enrichment, and user enrichment
+    in the correct order using data already in the store.  Use --no-X flags
+    to skip individual steps.
+    """
+    _setup_logging(verbose)
+    config = _load_config(ctx)
+
+    results: dict = {}
+
+    with create_store(config.store) as store:
+        if catalog:
+            if config.catalog.file:
+                from gitventory.catalog.sync import CatalogSyncer
+                try:
+                    syncer = CatalogSyncer(config.catalog.file, store)
+                    counts = syncer.sync(clear=False)
+                    results["catalog"] = counts
+                except Exception as exc:
+                    err_console.print(f"[red]Catalog sync failed:[/red] {exc}")
+            else:
+                console.print("[dim]Catalog sync skipped — no catalog.file configured.[/dim]")
+
+        if ownership:
+            if config.adapters.github and config.adapters.github.enabled:
+                from gitventory.ownership.sync import OwnershipSyncer
+                try:
+                    syncer = OwnershipSyncer(config.adapters.github, store)
+                    counts = syncer.sync(force=False)
+                    results["ownership"] = counts
+                except Exception as exc:
+                    err_console.print(f"[red]Ownership sync failed:[/red] {exc}")
+            else:
+                console.print("[dim]Ownership sync skipped — GitHub adapter not configured.[/dim]")
+
+        if teams:
+            from gitventory.ownership.team_enrichment import TeamEnrichmentSyncer
+            try:
+                syncer = TeamEnrichmentSyncer(store)
+                counts = syncer.sync()
+                results["teams"] = counts
+            except Exception as exc:
+                err_console.print(f"[red]Team enrichment failed:[/red] {exc}")
+
+        if users:
+            users_file = (
+                config.adapters.static_yaml.users_file
+                if config.adapters.static_yaml
+                else None
+            )
+            if users_file:
+                from gitventory.ownership.user_enrichment import UserEnrichmentSyncer
+                try:
+                    syncer = UserEnrichmentSyncer(users_file, store)
+                    counts = syncer.sync()
+                    results["users"] = counts
+                except Exception as exc:
+                    err_console.print(f"[red]User enrichment failed:[/red] {exc}")
+            else:
+                console.print("[dim]User enrichment skipped — no static_yaml.users_file configured.[/dim]")
+
+    # Summary
+    from rich.table import Table
+    table = Table(title="Sync results", show_header=True)
+    table.add_column("Step")
+    table.add_column("Result", style="green")
+
+    if "catalog" in results:
+        c = results["catalog"]
+        table.add_row("Catalog sync", f"{c['entities']} entities, {c['memberships']} memberships")
+    if "ownership" in results:
+        c = results["ownership"]
+        table.add_row("Ownership sync", f"{c['repos_updated']} repos updated across {c['teams_processed']} teams")
+    if "teams" in results:
+        c = results["teams"]
+        table.add_row("Team enrichment", f"{c['teams_enriched']} teams enriched")
+    if "users" in results:
+        c = results["users"]
+        table.add_row("User enrichment", f"{c['users_enriched']} enriched, {c['unmatched_refs']} unmatched")
+
+    if results:
+        console.print(table)
+    else:
+        console.print("[yellow]No sync steps ran — check your config or use --help.[/yellow]")
+
+
+# ---------------------------------------------------------------------------
 # show
 # ---------------------------------------------------------------------------
 
