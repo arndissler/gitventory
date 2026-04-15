@@ -107,6 +107,8 @@ teams = Table(
     Column("identities", Text),       # JSON list of {provider, value, metadata}
     Column("contacts", Text),         # JSON dict of contact channels
     Column("properties", Text),       # JSON dict of arbitrary metadata
+    Column("parent_team_id", String), # stable ID of parent team (nested teams)
+    Column("github_org", String),     # org slug — scopes the github_team_slug lookup
     Column("raw", Text),
 )
 
