@@ -162,13 +162,16 @@ Use **fine-grained personal access tokens** (not classic PATs) — they can be s
 
 Create one token per org at **Settings → Developer settings → Personal access tokens → Fine-grained tokens**:
 
-| Permission | Level | Required for |
-|---|---|---|
-| **Contents** | Read | Listing repos, reading workflow files (OIDC detection) |
-| **Metadata** | Read | Repo metadata — always required by the API |
-| **Members** | Read | `collect_github_teams: true` (team and member discovery) |
-| **Secret scanning alerts** | Read | `collect_secret_scanning: true` |
-| **Code scanning alerts** | Read | `collect_ghas_alerts: true` |
+| Scope | Permission | Level | Required for |
+|---|---|---|---|
+| Repository | **Contents** | Read | Listing repos, reading workflow files (OIDC detection) |
+| Repository | **Metadata** | Read | Repo metadata — always required by the API |
+| Reporisory | **Custom Properties** | (Optional) Read and Write | Access to custom repository properties |
+| Repository | **Secret scanning alerts** | Read | `collect_secret_scanning: true` |
+| Repository | **Code scanning alerts** | Read | `collect_ghas_alerts: true` |
+| Repository | **Dependabot alerts** | Read | Access to dependabot information |
+| Organization | **Members** | Read | `collect_github_teams: true` (team and member discovery) |
+| Organization | **Custom Properties** | Read | Organization custom properties |
 
 Dependabot alerts use the **Dependabot alerts** permission (Read).  
 If you only need repo metadata and OIDC mapping detection, Contents + Metadata is sufficient.
