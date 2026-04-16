@@ -583,6 +583,10 @@ gitventory query alerts --repo github:12345678
 # All alerts for repos linked to a catalog entity
 gitventory query alerts --catalog-entity checkout-api
 
+# All repos affected by a specific GitHub Security Advisory or CVE
+gitventory query alerts --advisory GHSA-xxxx-xxxx-xxxx
+gitventory query alerts --advisory CVE-2024-12345 --state all
+
 # Sorted by weighted priority (severity × service criticality weight)
 gitventory query alerts --sort-by weighted-priority
 gitventory query alerts --catalog-entity checkout-api --sort-by weighted-priority -o json

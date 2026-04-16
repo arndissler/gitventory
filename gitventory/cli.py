@@ -268,6 +268,7 @@ def query_accounts(
 @click.option("--repo", "repo_id", default=None, help="Filter by repository ID or full_name slug.")
 @click.option("--catalog-entity", "catalog_entity", default=None, help="Filter by catalog entity slug or stable ID.")
 @click.option("--state", default="open", type=click.Choice(["open", "dismissed", "fixed", "resolved", "all"]), show_default=True)
+@click.option("--advisory", "rule_id", default=None, help="Filter by advisory or rule ID (e.g. GHSA-xxxx-xxxx-xxxx, CVE-xxxx-xxxx).")
 @click.option("--sort-by", "sort_by", default=None, type=click.Choice(["weighted-priority"]), help="Sort results.")
 @click.option("-o", "--output", "output_fmt", default="table", type=click.Choice(["table", "json"]), show_default=True)
 @click.pass_context
@@ -278,6 +279,7 @@ def query_alerts(
     repo_id: Optional[str],
     catalog_entity: Optional[str],
     state: str,
+    rule_id: Optional[str],
     sort_by: Optional[str],
     output_fmt: str,
 ) -> None:
@@ -287,7 +289,7 @@ def query_alerts(
 
     config = _load_config(ctx)
     filters = build_alert_filters(
-        alert_type=alert_type, severity=severity, repo_id=repo_id, state=state
+        alert_type=alert_type, severity=severity, repo_id=repo_id, state=state, rule_id=rule_id
     )
 
     with create_store(config.store) as store:

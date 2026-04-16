@@ -68,6 +68,7 @@ def build_alert_filters(
     severity: Optional[str] = None,
     repo_id: Optional[str] = None,
     state: str = "open",
+    rule_id: Optional[str] = None,
 ) -> dict[str, Any]:
     filters: dict[str, Any] = {}
     if alert_type:
@@ -78,6 +79,8 @@ def build_alert_filters(
         filters["repo_id"] = repo_id
     if state != "all":
         filters["state"] = state
+    if rule_id:
+        filters["rule_id"] = rule_id
     return filters
 
 
