@@ -464,6 +464,34 @@ gitventory collect --repo my-org/my-repo --dry-run -v
 gitventory collect --dry-run -v
 ```
 
+#### Handling unexpected API values (`--max-errors`)
+
+The GitHub API occasionally returns values not yet reflected in gitventory's models —
+for example a new alert state introduced without notice. By default, gitventory tolerates
+up to **10** such per-entity validation errors per adapter before aborting, logging a
+`WARNING` for each skipped entity. This ensures one unexpected value doesn't wipe out an
+entire collection run.
+
+```bash
+# Default: tolerate up to 10 validation errors per adapter (from adapter config)
+gitventory collect
+
+# Never abort — always warn and skip invalid entities
+gitventory collect --max-errors -1
+
+# Strict: fail immediately on the first validation error (useful in CI)
+gitventory collect --max-errors 0
+```
+
+The threshold can also be set per-adapter in `config.yaml` so you don't have to pass it
+every time:
+
+```yaml
+adapters:
+  github:
+    max_entity_errors: 25   # tolerate more noise in large orgs
+```
+
 ### Query repositories
 
 ```bash

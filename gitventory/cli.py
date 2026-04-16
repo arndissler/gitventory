@@ -48,6 +48,14 @@ def main(ctx: click.Context, config: str) -> None:
 @click.option("--repo", default=None, help="Collect only this repository (org/name or github:NNN).")
 @click.option("--dry-run", is_flag=True, help="Collect but do not write to store.")
 @click.option("--no-validate", is_flag=True, help="Skip connectivity pre-check.")
+@click.option(
+    "--max-errors", "max_entity_errors", default=None, type=int,
+    help=(
+        "Per-entity validation errors to tolerate before aborting an adapter run. "
+        "0=strict (fail on first), -1=never fail. Overrides adapter config. "
+        "[default: adapter config, typically 10]"
+    ),
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable DEBUG logging.")
 @click.pass_context
 def collect(
@@ -56,6 +64,7 @@ def collect(
     repo: Optional[str],
     dry_run: bool,
     no_validate: bool,
+    max_entity_errors: Optional[int],
     verbose: bool,
 ) -> None:
     """Run adapters and populate the store."""
@@ -70,6 +79,7 @@ def collect(
             repo=repo,
             dry_run=dry_run,
             validate=not no_validate,
+            max_entity_errors=max_entity_errors,
         )
 
     if dry_run:

@@ -4,14 +4,50 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Iterator, Optional
+
+from pydantic import ValidationError
 
 from gitventory.adapters.base import AbstractAdapter
 from gitventory.config import AppConfig
+from gitventory.models.base import InventoryEntity
 from gitventory.registry import get_adapter, get_registry
 from gitventory.store.base import AbstractStore
 
 logger = logging.getLogger(__name__)
+
+
+def _guarded_iter(
+    entity_iter: Iterator[InventoryEntity],
+    adapter_name: str,
+    max_errors: int,
+) -> Iterator[InventoryEntity]:
+    """Yield entities from *entity_iter*, tolerating up to *max_errors* ValidationErrors.
+
+    Parameters
+    ----------
+    max_errors:
+        0  — strict: re-raise on the first error (preserves current behaviour).
+        N  — tolerate up to N errors, then re-raise.
+        -1 — fully lenient: always warn and skip, never re-raise.
+    """
+    error_count = 0
+    it = iter(entity_iter)
+    limit_str = str(max_errors) if max_errors >= 0 else "unlimited"
+    while True:
+        try:
+            yield next(it)
+        except StopIteration:
+            break
+        except ValidationError as exc:
+            error_count += 1
+            logger.warning(
+                "Adapter %s: skipping entity due to validation error "
+                "(%d/%s): %s",
+                adapter_name, error_count, limit_str, exc,
+            )
+            if max_errors == 0 or (max_errors > 0 and error_count > max_errors):
+                raise
 
 
 class CollectionRunner:
@@ -27,6 +63,7 @@ class CollectionRunner:
         dry_run: bool = False,
         validate: bool = True,
         repo: Optional[str] = None,
+        max_entity_errors: Optional[int] = None,
     ) -> dict[str, int]:
         """
         Run enabled adapters and return a map of ``{adapter_name: entity_count}``.
@@ -84,7 +121,9 @@ class CollectionRunner:
                 if validate and not adapter.validate_connectivity():
                     raise RuntimeError(f"Connectivity check failed for adapter {name!r}")
 
-                entity_iter = adapter.collect_one(repo) if repo else adapter.collect()  # type: ignore[attr-defined]
+                raw_iter = adapter.collect_one(repo) if repo else adapter.collect()  # type: ignore[attr-defined]
+                max_err = max_entity_errors if max_entity_errors is not None else getattr(adapter_cfg, "max_entity_errors", 10)
+                entity_iter = _guarded_iter(raw_iter, name, max_err)
 
                 if dry_run:
                     count = sum(1 for _ in entity_iter)

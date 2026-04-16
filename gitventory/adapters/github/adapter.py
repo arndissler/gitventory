@@ -68,6 +68,9 @@ class GitHubAdapterConfig(AdapterConfig):
     """Pause collection when fewer than this many GitHub API requests remain."""
     rate_limit_sleep_seconds: float = 1.0
     per_page: int = 100
+    max_entity_errors: int = 10
+    """How many per-entity validation errors to tolerate before aborting the run.
+    0 = strict (fail on first error).  -1 = never hard-fail, always warn and skip."""
 
     @model_validator(mode="before")
     @classmethod
