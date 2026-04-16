@@ -211,6 +211,7 @@ repo_team_assignments = Table(
     Column("team_id", String, nullable=False),
     Column("permission", String, nullable=False),
     Column("org", String, nullable=False),
+    Column("raw", Text),
 )
 
 repo_collaborators = Table(
@@ -224,6 +225,7 @@ repo_collaborators = Table(
     Column("user_id", String, nullable=False),
     Column("permission", String, nullable=False),
     Column("affiliation", String, nullable=False),
+    Column("raw", Text),
 )
 
 team_members = Table(
@@ -237,6 +239,7 @@ team_members = Table(
     Column("user_id", String, nullable=False),
     Column("role", String, nullable=False),
     Column("org", String, nullable=False),
+    Column("raw", Text),
 )
 
 collection_runs = Table(
@@ -317,6 +320,9 @@ _TEAM_MIGRATIONS: list[tuple[str, str, str]] = [
     ("teams", "properties", "TEXT"),
     ("teams", "parent_team_id", "VARCHAR"),
     ("teams", "github_org", "VARCHAR"),
+    ("repo_team_assignments", "raw", "TEXT"),
+    ("repo_collaborators", "raw", "TEXT"),
+    ("team_members", "raw", "TEXT"),
 ]
 
 
