@@ -351,7 +351,7 @@ def query_mappings(
     output_fmt: str,
 ) -> None:
     """List deployment mappings (repo → cloud account links)."""
-    from gitventory.models import DeploymentMapping
+    from gitventory.models import DeploymentMapping, Repository
     from gitventory.store.query import build_mapping_filters
 
     config = _load_config(ctx)
@@ -362,12 +362,45 @@ def query_mappings(
     with create_store(config.store) as store:
         results = store.query(DeploymentMapping, filters)
 
+        # Enrich with human-readable repo slug and URL
+        repo_cache: dict[str, Repository] = {}
+        for m in results:
+            if m.repo_id and m.repo_id not in repo_cache:
+                r = store.get(Repository, m.repo_id)
+                if r:
+                    repo_cache[m.repo_id] = r
+
     if not results:
         console.print("[dim]No deployment mappings found.[/dim]")
         return
 
-    cols = ["repo_id", "target_type", "target_id", "deploy_method", "environment", "detection_method", "notes"]
-    _output(results, cols, output_fmt, "Deployment Mappings")
+    if output_fmt == "json":
+        import json
+        rows = []
+        for m in results:
+            row = m.model_dump()
+            r = repo_cache.get(m.repo_id or "")
+            row["repo_slug"] = r.full_name if r else None
+            row["repo_url"] = r.url if r else None
+            rows.append(row)
+        console.print(json.dumps(rows, indent=2, default=str))
+        return
+
+    from rich.table import Table as RichTable
+    table = RichTable(title="Deployment Mappings", show_header=True)
+    for col in ["repo_slug", "repo_url", "target_id", "deploy_method", "environment", "detection_method"]:
+        table.add_column(col)
+    for m in results:
+        r = repo_cache.get(m.repo_id or "")
+        table.add_row(
+            r.full_name if r else (m.repo_id or "—"),
+            r.url if r else "—",
+            m.target_id or "—",
+            m.deploy_method or "—",
+            m.environment or "—",
+            m.detection_method or "—",
+        )
+    console.print(table)
 
 
 @query.command("users")
