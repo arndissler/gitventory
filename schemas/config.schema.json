@@ -195,9 +195,24 @@
           "title": "Rate Limit Sleep Seconds",
           "type": "number"
         },
+        "smart_rate_limiting": {
+          "default": true,
+          "title": "Smart Rate Limiting",
+          "type": "boolean"
+        },
         "per_page": {
           "default": 100,
           "title": "Per Page",
+          "type": "integer"
+        },
+        "max_entity_errors": {
+          "default": 10,
+          "title": "Max Entity Errors",
+          "type": "integer"
+        },
+        "http_timeout": {
+          "default": 60,
+          "title": "Http Timeout",
           "type": "integer"
         }
       },

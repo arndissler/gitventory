@@ -67,10 +67,17 @@ class GitHubAdapterConfig(AdapterConfig):
     rate_limit_min_remaining: int = 100
     """Pause collection when fewer than this many GitHub API requests remain."""
     rate_limit_sleep_seconds: float = 1.0
+    smart_rate_limiting: bool = True
+    """When True, skip the per-call sleep and rely on check_rate_limit() to pause
+    only when quota is actually low.  Set to False to restore the unconditional
+    rate_limit_sleep_seconds delay between every API call."""
     per_page: int = 100
     max_entity_errors: int = 10
     """How many per-entity validation errors to tolerate before aborting the run.
     0 = strict (fail on first error).  -1 = never hard-fail, always warn and skip."""
+    http_timeout: int = 60
+    """Read timeout in seconds for GitHub API requests.
+    PyGithub default is 15s — increase for large orgs with many paginated results."""
 
     @model_validator(mode="before")
     @classmethod
@@ -154,6 +161,8 @@ class GitHubAdapter(AbstractAdapter):
         self._client = GitHubClient(
             auth_config=cfg.auth,
             rate_limit_sleep=cfg.rate_limit_sleep_seconds,
+            http_timeout=cfg.http_timeout,
+            smart_rate_limiting=cfg.smart_rate_limiting,
         )
         try:
             for org in cfg.orgs:
@@ -174,6 +183,8 @@ class GitHubAdapter(AbstractAdapter):
         self._client = GitHubClient(
             auth_config=cfg.auth,
             rate_limit_sleep=cfg.rate_limit_sleep_seconds,
+            http_timeout=cfg.http_timeout,
+            smart_rate_limiting=cfg.smart_rate_limiting,
         )
         try:
             logger.info("GitHub adapter: collecting single repo %r", full_name)

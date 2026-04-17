@@ -25,9 +25,11 @@ class GitHubClient:
     - token (global):    same ``Github`` instance reused for every org
     """
 
-    def __init__(self, auth_config, rate_limit_sleep: float = 1.0) -> None:
+    def __init__(self, auth_config, rate_limit_sleep: float = 1.0, http_timeout: int = 60, smart_rate_limiting: bool = True) -> None:
         self._auth = auth_config
         self._rate_limit_sleep = rate_limit_sleep
+        self._http_timeout = http_timeout
+        self._smart_rate_limiting = smart_rate_limiting
         self._org_clients: dict[str, Github] = {}
 
     # ------------------------------------------------------------------
@@ -49,16 +51,16 @@ class GitHubClient:
 
         if isinstance(auth, TokenPerOrgConfig):
             token = auth.token_for(org)  # raises KeyError with a clear message if missing
-            return Github(auth=Auth.Token(token), per_page=100)
+            return Github(auth=Auth.Token(token), per_page=100, timeout=self._http_timeout)
 
         # TokenAuthConfig — global token, same client for every org
-        return Github(auth=Auth.Token(auth.token), per_page=100)
+        return Github(auth=Auth.Token(auth.token), per_page=100, timeout=self._http_timeout)
 
     def _build_gh_app(self, org: str, auth: AppAuthConfig) -> Github:
         """Generate a per-org installation token for a GitHub App."""
         private_key = auth.resolve_private_key()
         app_auth = Auth.AppAuth(auth.app_id, private_key)
-        gi = GithubIntegration(auth=app_auth)
+        gi = GithubIntegration(auth=app_auth, timeout=self._http_timeout)
 
         if org in auth.installation_ids:
             # Use the pinned installation ID — skips one API call
@@ -312,7 +314,7 @@ class GitHubClient:
             logger.debug("Could not check rate limit: %s", e)
 
     def _maybe_sleep(self) -> None:
-        if self._rate_limit_sleep > 0:
+        if not self._smart_rate_limiting and self._rate_limit_sleep > 0:
             time.sleep(self._rate_limit_sleep)
 
     def close(self) -> None:
