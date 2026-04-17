@@ -62,7 +62,7 @@ class GitHubClient:
 
         if org in auth.installation_ids:
             # Use the pinned installation ID — skips one API call
-            installation = gi.get_installation(auth.installation_ids[org])
+            installation = gi.get_app_installation(auth.installation_ids[org])
             logger.debug(
                 "GitHub App: using pinned installation %d for org %r",
                 auth.installation_ids[org], org,
