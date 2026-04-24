@@ -269,6 +269,7 @@ def query_accounts(
 @click.option("--catalog-entity", "catalog_entity", default=None, help="Filter by catalog entity slug or stable ID.")
 @click.option("--state", default="open", type=click.Choice(["open", "dismissed", "fixed", "resolved", "all"]), show_default=True)
 @click.option("--advisory", "rule_id", default=None, help="Filter by advisory or rule ID (e.g. GHSA-xxxx-xxxx-xxxx, CVE-xxxx-xxxx).")
+@click.option("--older-than", "older_than_days", default=None, type=int, help="Only show alerts older than N days (based on when GitHub first detected them).")
 @click.option("--sort-by", "sort_by", default=None, type=click.Choice(["weighted-priority"]), help="Sort results.")
 @click.option("-o", "--output", "output_fmt", default="table", type=click.Choice(["table", "json"]), show_default=True)
 @click.pass_context
@@ -280,6 +281,7 @@ def query_alerts(
     catalog_entity: Optional[str],
     state: str,
     rule_id: Optional[str],
+    older_than_days: Optional[int],
     sort_by: Optional[str],
     output_fmt: str,
 ) -> None:
@@ -289,7 +291,8 @@ def query_alerts(
 
     config = _load_config(ctx)
     filters = build_alert_filters(
-        alert_type=alert_type, severity=severity, repo_id=repo_id, state=state, rule_id=rule_id
+        alert_type=alert_type, severity=severity, repo_id=repo_id, state=state,
+        rule_id=rule_id, older_than_days=older_than_days,
     )
 
     with create_store(config.store) as store:

@@ -69,6 +69,7 @@ def build_alert_filters(
     repo_id: Optional[str] = None,
     state: str = "open",
     rule_id: Optional[str] = None,
+    older_than_days: Optional[int] = None,
 ) -> dict[str, Any]:
     filters: dict[str, Any] = {}
     if alert_type:
@@ -81,6 +82,9 @@ def build_alert_filters(
         filters["state"] = state
     if rule_id:
         filters["rule_id"] = rule_id
+    if older_than_days is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        filters["created_at__lt"] = cutoff
     return filters
 
 

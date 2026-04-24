@@ -587,6 +587,10 @@ gitventory query alerts --catalog-entity checkout-api
 gitventory query alerts --advisory GHSA-xxxx-xxxx-xxxx
 gitventory query alerts --advisory CVE-2024-12345 --state all
 
+# Alerts older than N days (based on when GitHub first detected them)
+gitventory query alerts --severity critical --older-than 90
+gitventory query alerts --severity high --older-than 30 --catalog-entity checkout-api
+
 # Sorted by weighted priority (severity × service criticality weight)
 gitventory query alerts --sort-by weighted-priority
 gitventory query alerts --catalog-entity checkout-api --sort-by weighted-priority -o json
