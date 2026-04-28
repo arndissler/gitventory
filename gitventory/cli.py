@@ -10,12 +10,19 @@ from typing import Optional
 
 import click
 from rich.console import Console
-from rich.table import Table
 
 from gitventory.config import load_config
+from gitventory.output import (
+    console,
+    criticality_score as _criticality_score,
+    output as _output,
+    output_alerts_grouped as _output_alerts_grouped,
+    output_alerts_with_priority as _output_alerts_with_priority,
+    print_detail as _print_detail,
+    weighted_priority as _weighted_priority,
+)
 from gitventory.store import create_store
 
-console = Console()
 err_console = Console(stderr=True)
 
 
@@ -270,6 +277,12 @@ def query_accounts(
 @click.option("--state", default="open", type=click.Choice(["open", "dismissed", "fixed", "resolved", "all"]), show_default=True)
 @click.option("--advisory", "rule_id", default=None, help="Filter by advisory or rule ID (e.g. GHSA-xxxx-xxxx-xxxx, CVE-xxxx-xxxx).")
 @click.option("--older-than", "older_than_days", default=None, type=int, help="Only show alerts older than N days (based on when GitHub first detected them).")
+@click.option("--group", "group_keys", multiple=True, metavar="KEY",
+              help=(
+                  "Group results by one or more keys. Repeatable or comma-separated. "
+                  "Supported: repo, team. "
+                  "Examples: --group repo  |  --group team,repo  |  --group team --group repo"
+              ))
 @click.option("--sort-by", "sort_by", default=None, type=click.Choice(["weighted-priority"]), help="Sort results.")
 @click.option("-o", "--output", "output_fmt", default="table", type=click.Choice(["table", "json"]), show_default=True)
 @click.pass_context
@@ -282,12 +295,34 @@ def query_alerts(
     state: str,
     rule_id: Optional[str],
     older_than_days: Optional[int],
+    group_keys: tuple,
     sort_by: Optional[str],
     output_fmt: str,
 ) -> None:
-    """List GHAS alerts matching the given filters."""
-    from gitventory.models import CatalogEntity, CatalogMembership, GhasAlert, Repository
+    """List GHAS alerts matching the given filters.
+
+    Use --group to aggregate results. Contact info (repo slug, URL, owning team)
+    is automatically included in grouped output.
+
+    \b
+    Examples:
+      gitventory query alerts --severity critical --older-than 90 --group repo
+      gitventory query alerts --group team,repo -o json
+    """
+    from gitventory.models import CatalogEntity, CatalogMembership, GhasAlert, Repository, Team
     from gitventory.store.query import build_alert_filters
+
+    # Normalise --group: split comma-separated values and deduplicate, preserving order
+    _VALID_GROUPS = {"repo", "team"}
+    groups: list[str] = []
+    for key in group_keys:
+        for part in key.split(","):
+            part = part.strip()
+            if part and part not in groups:
+                if part not in _VALID_GROUPS:
+                    err_console.print(f"[red]Unknown --group key:[/red] {part!r}. Supported: {', '.join(sorted(_VALID_GROUPS))}")
+                    sys.exit(1)
+                groups.append(part)
 
     config = _load_config(ctx)
     filters = build_alert_filters(
@@ -322,6 +357,20 @@ def query_alerts(
                     if existing is None or _criticality_score(ce.criticality) > _criticality_score(existing):
                         criticality_by_repo[m.technical_entity_id] = ce.criticality
 
+        # Build repo + team contact cache when grouping is active
+        repo_cache: dict[str, Repository] = {}
+        team_cache: dict[str, Team] = {}
+        if groups:
+            for a in results:
+                if a.repo_id and a.repo_id not in repo_cache:
+                    r = store.get(Repository, a.repo_id)
+                    if r:
+                        repo_cache[a.repo_id] = r
+                        if r.owning_team_id and r.owning_team_id not in team_cache:
+                            t = store.get(Team, r.owning_team_id)
+                            if t:
+                                team_cache[r.owning_team_id] = t
+
     if not results:
         console.print("[dim]No alerts found.[/dim]")
         return
@@ -332,9 +381,12 @@ def query_alerts(
             reverse=True,
         )
 
+    if groups:
+        _output_alerts_grouped(results, groups, repo_cache, team_cache, output_fmt)
+        return
+
     cols = ["repo_id", "alert_type", "state", "severity", "secret_type", "rule_id", "created_at", "url"]
     if sort_by == "weighted-priority":
-        # Annotate results with weighted_priority for display
         _output_alerts_with_priority(results, criticality_by_repo, output_fmt)
     else:
         _output(results, cols, output_fmt, "GHAS Alerts")
@@ -1189,38 +1241,6 @@ def _setup_logging(verbose: bool) -> None:
     )
 
 
-def _output(results: list, cols: list[str], fmt: str, title: str) -> None:
-    if fmt == "json":
-        output_data = []
-        for obj in results:
-            row = {}
-            for col in cols:
-                val = getattr(obj, col, None)
-                row[col] = str(val) if val is not None else None
-            output_data.append(row)
-        console.print_json(json.dumps(output_data))
-        return
-
-    table = Table(title=f"{title} ({len(results)})")
-    for col in cols:
-        table.add_column(col.replace("_", " ").title())
-
-    for obj in results:
-        row_vals = []
-        for col in cols:
-            val = getattr(obj, col, None)
-            if val is None:
-                row_vals.append("[dim]—[/dim]")
-            elif col == "is_archived" and val:
-                row_vals.append("[yellow]archived[/yellow]")
-            elif col in ("open_secret_alerts", "open_code_scanning_alerts", "open_dependabot_alerts") and val > 0:
-                row_vals.append(f"[red]{val}[/red]")
-            else:
-                row_vals.append(str(val))
-        table.add_row(*row_vals)
-
-    console.print(table)
-
 
 def _resolve_catalog_entity(store, entity_id: str):
     """Accept stable ID, provider_id (type:slug), or bare slug."""
@@ -1262,90 +1282,3 @@ def _resolve_repo(store, repo_id: str):
     return results[0] if results else None
 
 
-_SEVERITY_SCORES = {"critical": 4, "high": 3, "medium": 2, "low": 1}
-_CRITICALITY_WEIGHTS = {"critical": 2.0, "high": 1.5, "medium": 1.0, "low": 0.5}
-
-
-def _criticality_score(criticality: Optional[str]) -> float:
-    return _CRITICALITY_WEIGHTS.get(criticality or "", 1.0)
-
-
-def _weighted_priority(severity: Optional[str], criticality: Optional[str]) -> float:
-    """Compute severity × criticality_weight.
-
-    Original alert severity is never mutated — this is computed at display time only.
-    A repo not linked to any catalog entity defaults to weight 1.0 (neutral).
-    """
-    s = _SEVERITY_SCORES.get(severity or "", 0)
-    w = _CRITICALITY_WEIGHTS.get(criticality or "", 1.0)
-    return s * w
-
-
-def _output_alerts_with_priority(
-    alerts: list,
-    criticality_by_repo: dict[str, Optional[str]],
-    output_fmt: str,
-) -> None:
-    """Output alerts with an extra weighted_priority column."""
-    cols = ["repo_id", "alert_type", "state", "severity", "weighted_priority",
-            "secret_type", "rule_id", "created_at"]
-
-    if output_fmt == "json":
-        output_data = []
-        for a in alerts:
-            wp = _weighted_priority(a.severity, criticality_by_repo.get(a.repo_id))
-            row = {
-                "repo_id": a.repo_id,
-                "alert_type": a.alert_type,
-                "state": a.state,
-                "severity": a.severity,
-                "weighted_priority": wp,
-                "secret_type": a.secret_type,
-                "rule_id": a.rule_id,
-                "created_at": str(a.created_at),
-            }
-            output_data.append(row)
-        console.print_json(json.dumps(output_data))
-        return
-
-    table = Table(title=f"GHAS Alerts — sorted by weighted priority ({len(alerts)})")
-    for col in cols:
-        table.add_column(col.replace("_", " ").title())
-
-    for a in alerts:
-        wp = _weighted_priority(a.severity, criticality_by_repo.get(a.repo_id))
-        wp_str = f"{wp:.1f}"
-        if wp >= 6:
-            wp_str = f"[bold red]{wp_str}[/bold red]"
-        elif wp >= 3:
-            wp_str = f"[red]{wp_str}[/red]"
-        elif wp >= 1.5:
-            wp_str = f"[yellow]{wp_str}[/yellow]"
-
-        table.add_row(
-            a.repo_id or "",
-            a.alert_type or "",
-            a.state or "",
-            a.severity or "[dim]—[/dim]",
-            wp_str,
-            a.secret_type or "[dim]—[/dim]",
-            a.rule_id or "[dim]—[/dim]",
-            str(a.created_at) if a.created_at else "[dim]—[/dim]",
-        )
-
-    console.print(table)
-
-
-def _print_detail(entity) -> None:
-    """Print all fields of an entity as a two-column table."""
-    table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_column("Field", style="bold dim")
-    table.add_column("Value")
-
-    for field_name, value in entity.model_dump().items():
-        if field_name == "raw":
-            continue  # Skip raw payload in detail view
-        display = json.dumps(value, default=str) if isinstance(value, (dict, list)) else str(value)
-        table.add_row(field_name, display)
-
-    console.print(table)
