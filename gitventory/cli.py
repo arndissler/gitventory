@@ -849,6 +849,70 @@ def sync_cmd(ctx: click.Context, catalog: bool, ownership: bool, teams: bool, us
 
 
 # ---------------------------------------------------------------------------
+# scaffold
+# ---------------------------------------------------------------------------
+
+@main.command("scaffold")
+@click.option(
+    "--teams", "teams_file",
+    default=None, type=click.Path(),
+    help="Path to teams.yaml. Appends stubs for unrepresented GitHub teams.",
+)
+@click.option(
+    "--accounts", "accounts_file",
+    default=None, type=click.Path(),
+    help="Path to aws_accounts.yaml. Appends stubs for unrepresented cloud accounts.",
+)
+@click.option(
+    "--diff", "show_diff",
+    is_flag=True, default=False,
+    help="Show a diff of database vs file to stdout without writing anything.",
+)
+@click.option(
+    "--dry-run", "dry_run",
+    is_flag=True, default=False,
+    help="Preview what would be appended without modifying any files.",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable DEBUG logging.")
+@click.pass_context
+def scaffold_cmd(
+    ctx: click.Context,
+    teams_file: Optional[str],
+    accounts_file: Optional[str],
+    show_diff: bool,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Generate stub YAML entries for entities discovered in the database.
+
+    Reads the given file(s), finds entities in the database that have no
+    corresponding file entry, and appends minimal stubs.  Existing entries are
+    never modified.
+
+    \b
+    Examples
+        gitventory scaffold --teams inventory/teams.yaml
+        gitventory scaffold --teams inventory/teams.yaml --dry-run
+        gitventory scaffold --teams inventory/teams.yaml --diff
+        gitventory scaffold --accounts inventory/aws_accounts.yaml --diff
+    """
+    _setup_logging(verbose)
+
+    if not teams_file and not accounts_file:
+        err_console.print("[red]Specify at least one of --teams or --accounts.[/red]")
+        sys.exit(1)
+
+    from gitventory.scaffold import scaffold_accounts, scaffold_teams
+
+    config = _load_config(ctx)
+    with create_store(config.store) as store:
+        if teams_file:
+            scaffold_teams(store, Path(teams_file), dry_run=dry_run, diff=show_diff)
+        if accounts_file:
+            scaffold_accounts(store, Path(accounts_file), dry_run=dry_run, diff=show_diff)
+
+
+# ---------------------------------------------------------------------------
 # show
 # ---------------------------------------------------------------------------
 

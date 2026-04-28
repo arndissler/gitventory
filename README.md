@@ -682,6 +682,56 @@ gitventory ownership sync -v
 
 Ownership sync reads `github_team` identity entries from your `teams.yaml` and assigns `owning_team_id` on repositories that belong to each team in GitHub.  Repositories that already have an explicit owner (set via YAML or catalog) are skipped unless `--force` is passed.
 
+### Scaffold
+
+`gitventory scaffold` generates stub YAML entries for entities that exist in the database
+but have no corresponding entry in your hand-maintained inventory files.  Existing entries
+are never touched — only new stubs are appended.
+
+```bash
+# Append stub entries for GitHub teams not yet in teams.yaml
+gitventory scaffold --teams inventory/teams.yaml
+
+# Preview without writing (dry run)
+gitventory scaffold --teams inventory/teams.yaml --dry-run
+
+# Append stubs for cloud accounts not yet in aws_accounts.yaml
+gitventory scaffold --accounts inventory/aws_accounts.yaml
+
+# Both at once
+gitventory scaffold --teams inventory/teams.yaml --accounts inventory/aws_accounts.yaml
+
+# Show a diff of database vs file — what needs to be added, what may be stale
+gitventory scaffold --teams inventory/teams.yaml --diff
+gitventory scaffold --accounts inventory/aws_accounts.yaml --diff
+```
+
+`--diff` prints two lists to stdout:
+
+- **In database, not in file** — entities discovered by the GitHub adapter that have no
+  matching entry yet (candidates to scaffold)
+- **In file, not in database** — file entries with no matching DB record (potentially
+  stale after a team rename or account decommission)
+
+Each generated team stub includes the `org/team-slug` id and a `github_team` identity so
+that ownership sync and team enrichment can link it immediately:
+
+```yaml
+  - id: my-org/platform-engineering
+    display_name: Platform Engineering
+    identities:
+      - provider: github_team
+        value: my-org/platform-engineering
+```
+
+Fill in `contacts`, `email`, `properties`, etc. after scaffolding.
+
+Matching for teams uses three tiers (in priority order):
+1. Explicit `identities[]` entry with `provider: github_team` and `value: org/slug`
+2. Same with `value: github:team:<numeric_id>` (for entries that store the numeric form)
+3. Entry `id` directly equals `org/slug`
+4. Legacy `github_team_slug` field (fallback)
+
 ### Inspect a single entity
 
 ```bash
