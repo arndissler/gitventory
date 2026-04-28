@@ -594,7 +594,24 @@ gitventory query alerts --severity high --older-than 30 --catalog-entity checkou
 # Sorted by weighted priority (severity × service criticality weight)
 gitventory query alerts --sort-by weighted-priority
 gitventory query alerts --catalog-entity checkout-api --sort-by weighted-priority -o json
+
+# Group by repo — one object per repo with alerts[] and team contact fields
+gitventory query alerts --severity critical --group repo -o json
+gitventory query alerts --severity critical --older-than 45 --group repo
+
+# Group by team — one object per team with alerts[]
+gitventory query alerts --severity critical --group team -o json
+
+# Nested group: one object per team, repos[] inside, alerts[] inside each repo
+# Use --group twice, or pass a comma-separated list
+gitventory query alerts --older-than 45 --severity critical --group team --group repo -o json
+gitventory query alerts --older-than 45 --severity critical --group team,repo -o json
 ```
+
+Grouped output includes team contact fields (`team_email`, `team_slack_channel`) alongside the
+alerts so the result can be fed directly into notification workflows without post-processing.
+When both `team` and `repo` are specified, team is always the outer dimension regardless of
+the order they are passed.
 
 ### Query teams
 
