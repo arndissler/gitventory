@@ -21,6 +21,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Permissions that qualify a team as a potential owner, in descending priority.
+_OWNERSHIP_PERMISSIONS = ("admin", "maintain")
+
 
 class OwnershipSyncer:
     """Assign ``owning_team_id`` on repositories based on GitHub team membership."""
@@ -97,6 +100,79 @@ class OwnershipSyncer:
             repos_updated, teams_processed,
         )
         return {"repos_updated": repos_updated, "teams_processed": teams_processed}
+
+    def infer_from_permissions(self, force: bool = False) -> dict[str, int]:
+        """Promote a team to owning_team_id based on repo team permission assignments.
+
+        For each repo without an owner (or all repos when ``force=True``), looks up
+        ``repo_team_assignments`` with ``maintain`` or ``admin`` permission.  If
+        exactly one team holds the highest permission tier it is promoted.  Ambiguous
+        cases (multiple teams at the same top tier) are skipped with a warning.
+
+        Parameters
+        ----------
+        force:
+            If True, re-evaluate repos that already have an ``owning_team_id``.
+            Existing assignments may be overwritten.
+
+        Returns
+        -------
+        dict with keys ``repos_promoted``, ``repos_ambiguous``, ``repos_no_signal``.
+        """
+        from gitventory.models.repo_team_assignment import RepoTeamAssignment
+        from gitventory.models.repository import Repository
+
+        if force:
+            repos = self._store.query(Repository, {})
+        else:
+            repos = self._store.query(Repository, {"owning_team_id__isnull": True})
+
+        repos_promoted = 0
+        repos_ambiguous = 0
+        repos_no_signal = 0
+
+        for repo in repos:
+            assignments = self._store.query(RepoTeamAssignment, {"repo_id": repo.id})
+
+            admin_teams = list({a.team_id for a in assignments if a.permission == "admin"})
+            maintain_teams = list({a.team_id for a in assignments if a.permission == "maintain"})
+
+            if admin_teams:
+                top_teams = admin_teams
+                top_perm = "admin"
+            elif maintain_teams:
+                top_teams = maintain_teams
+                top_perm = "maintain"
+            else:
+                repos_no_signal += 1
+                continue
+
+            if len(top_teams) > 1:
+                logger.warning(
+                    "Infer ownership: %s — ambiguous, %d teams share %s permission, skipping "
+                    "(teams: %s)",
+                    repo.full_name,
+                    len(top_teams),
+                    top_perm,
+                    ", ".join(sorted(top_teams)),
+                )
+                repos_ambiguous += 1
+                continue
+
+            winner = top_teams[0]
+            self._store.patch(Repository, repo.id, {"owning_team_id": winner})
+            logger.debug("Infer ownership: %s → %s (%s)", repo.full_name, winner, top_perm)
+            repos_promoted += 1
+
+        logger.info(
+            "Ownership inference complete: %d promoted, %d ambiguous, %d no signal",
+            repos_promoted, repos_ambiguous, repos_no_signal,
+        )
+        return {
+            "repos_promoted": repos_promoted,
+            "repos_ambiguous": repos_ambiguous,
+            "repos_no_signal": repos_no_signal,
+        }
 
     def _build_slug_map(self) -> dict[str, str]:
         """Return {"{org}/{slug}": "team:{party_id}"} from stored team records.

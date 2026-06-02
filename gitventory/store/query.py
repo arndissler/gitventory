@@ -14,6 +14,7 @@ def build_repo_filters(
     stale_days: Optional[int] = None,
     has_alerts: bool = False,
     is_archived: Optional[bool] = None,
+    unowned: bool = False,
     extra: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """Build a filter dict for Repository queries from CLI options."""
@@ -40,6 +41,8 @@ def build_repo_filters(
         filters["has_open_alerts"] = True
     if is_archived is not None:
         filters["is_archived"] = is_archived
+    if unowned:
+        filters["owning_team_id__isnull"] = True
 
     # Parse generic -f "key=value" / "key>value" / "key<value" expressions
     for expr in extra or []:

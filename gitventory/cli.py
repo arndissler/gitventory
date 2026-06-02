@@ -117,6 +117,7 @@ def query() -> None:
 @click.option("--stale-days", type=int, default=None, help="Repos not pushed to in N days.")
 @click.option("--has-alerts", is_flag=True, help="Only repos with open GHAS alerts.")
 @click.option("--archived/--no-archived", default=None, help="Filter by archived status.")
+@click.option("--unowned", is_flag=True, help="Only repos with no owning team assigned.")
 @click.option("-f", "--filter", "extra_filters", multiple=True, help="Generic filter expression (e.g. 'open_secret_alerts>0').")
 @click.option("-o", "--output", "output_fmt", default="table", type=click.Choice(["table", "json"]), show_default=True)
 @click.option("--fields", default=None, help="Comma-separated list of columns to display.")
@@ -131,6 +132,7 @@ def query_repos(
     stale_days: Optional[int],
     has_alerts: bool,
     archived: Optional[bool],
+    unowned: bool,
     extra_filters: tuple[str, ...],
     output_fmt: str,
     fields: Optional[str],
@@ -148,6 +150,7 @@ def query_repos(
         stale_days=stale_days,
         has_alerts=has_alerts,
         is_archived=archived,
+        unowned=unowned,
         extra=list(extra_filters),
     )
 
@@ -706,14 +709,20 @@ def ownership() -> None:
 
 @ownership.command("sync")
 @click.option("--force", is_flag=True, help="Overwrite existing owning_team_id assignments.")
+@click.option("--infer", is_flag=True, help="Infer ownership from maintain/admin team permissions when no owner is set.")
 @click.option("-v", "--verbose", is_flag=True, help="Enable DEBUG logging.")
 @click.pass_context
-def ownership_sync(ctx: click.Context, force: bool, verbose: bool) -> None:
+def ownership_sync(ctx: click.Context, force: bool, infer: bool, verbose: bool) -> None:
     """Assign owning_team_id on repositories from GitHub team membership.
 
     Reads teams from the store (as loaded by static_yaml), resolves their GitHub
     team identities, fetches the repository list for each team, and patches
     owning_team_id on repos that don't already have an owner (unless --force).
+
+    With --infer, a second pass promotes repos that still lack an owner by
+    looking at which teams hold maintain or admin permission on the repo.
+    If exactly one team holds the highest permission tier it becomes the owner;
+    ambiguous cases (multiple teams tied at the same level) are skipped.
 
     Precedence: owning_team_id already set in YAML or catalog is never
     overwritten unless --force is passed.
@@ -737,12 +746,26 @@ def ownership_sync(ctx: click.Context, force: bool, verbose: bool) -> None:
             err_console.print(f"[red]Ownership sync failed:[/red] {exc}")
             sys.exit(1)
 
+        if infer:
+            try:
+                infer_counts = syncer.infer_from_permissions(force=force)
+            except Exception as exc:
+                err_console.print(f"[red]Ownership inference failed:[/red] {exc}")
+                sys.exit(1)
+
     if force:
         console.print("[yellow]Ownership sync ran with --force (existing assignments overwritten).[/yellow]")
     console.print(
         f"[green]Ownership sync complete:[/green] "
         f"{counts['repos_updated']} repos updated across {counts['teams_processed']} teams"
     )
+    if infer:
+        console.print(
+            f"[green]Ownership inference complete:[/green] "
+            f"{infer_counts['repos_promoted']} promoted, "
+            f"{infer_counts['repos_ambiguous']} ambiguous, "
+            f"{infer_counts['repos_no_signal']} no signal"
+        )
 
 
 # ---------------------------------------------------------------------------

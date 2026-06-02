@@ -508,6 +508,12 @@ gitventory query repos --repo github:12345678 -o json
 # Repos not pushed to in 90+ days with open GHAS alerts
 gitventory query repos --stale-days 90 --has-alerts
 
+# Repos with no owning team assigned
+gitventory query repos --unowned
+
+# Repos with no owner that have also gone stale
+gitventory query repos --unowned --stale-days 180
+
 # Repos owned by a specific team
 gitventory query repos --team platform-engineering
 
@@ -676,11 +682,24 @@ gitventory ownership sync
 # Overwrite existing assignments too
 gitventory ownership sync --force
 
+# Also infer ownership from maintain/admin team permissions for repos still unowned after the primary sync
+gitventory ownership sync --infer
+
 # Verbose output
 gitventory ownership sync -v
 ```
 
 Ownership sync reads `github_team` identity entries from your `teams.yaml` and assigns `owning_team_id` on repositories that belong to each team in GitHub.  Repositories that already have an explicit owner (set via YAML or catalog) are skipped unless `--force` is passed.
+
+**`--infer` (permission-based inference)**
+
+After the primary sync, `--infer` runs a second pass over repos that still have no owner.  For each such repo it inspects `repo_team_assignments` and promotes the team that holds the highest permission tier:
+
+- `admin` is preferred over `maintain`
+- If exactly one team holds the top permission, it becomes the owner
+- If multiple teams share the top permission, the repo is skipped (logged as ambiguous)
+
+This writes only to the database — YAML files are never modified.  Combine with `--force` to re-evaluate repos that already have an owner.
 
 ### Scaffold
 

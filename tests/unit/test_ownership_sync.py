@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gitventory.models.repo_team_assignment import RepoTeamAssignment
 from gitventory.models.repository import Repository
 from gitventory.models.team import ExternalIdentity, Team
 from gitventory.ownership.sync import OwnershipSyncer
@@ -268,3 +269,123 @@ def test_sync_no_teams_returns_early():
     counts = syncer.sync()
 
     assert counts == {"repos_updated": 0, "teams_processed": 0}
+
+
+# ---------------------------------------------------------------------------
+# infer_from_permissions()
+# ---------------------------------------------------------------------------
+
+def _make_rta(repo_id: str, team_id: str, permission: str) -> RepoTeamAssignment:
+    return RepoTeamAssignment(
+        id=f"rta:{repo_id}::{team_id}",
+        provider_id=f"{repo_id}::{team_id}",
+        source_adapter="github",
+        collected_at=_NOW,
+        repo_id=repo_id,
+        team_id=team_id,
+        permission=permission,
+        org="my-org",
+    )
+
+
+def test_infer_promotes_sole_admin_team():
+    store = MagicMock()
+    repo = _make_repo("github:10", "my-org/repo-x")
+    store.query.side_effect = [
+        [repo],  # first call: unowned repos
+        [_make_rta("github:10", "github:team:1", "admin")],  # second call: assignments
+    ]
+    config = _make_config(["my-org"])
+    syncer = OwnershipSyncer(config, store)
+    counts = syncer.infer_from_permissions()
+
+    store.patch.assert_called_once_with(
+        Repository, "github:10", {"owning_team_id": "github:team:1"}
+    )
+    assert counts == {"repos_promoted": 1, "repos_ambiguous": 0, "repos_no_signal": 0}
+
+
+def test_infer_prefers_admin_over_maintain():
+    store = MagicMock()
+    repo = _make_repo("github:11", "my-org/repo-y")
+    store.query.side_effect = [
+        [repo],
+        [
+            _make_rta("github:11", "github:team:9", "maintain"),
+            _make_rta("github:11", "github:team:7", "admin"),
+        ],
+    ]
+    config = _make_config(["my-org"])
+    syncer = OwnershipSyncer(config, store)
+    counts = syncer.infer_from_permissions()
+
+    store.patch.assert_called_once_with(
+        Repository, "github:11", {"owning_team_id": "github:team:7"}
+    )
+    assert counts["repos_promoted"] == 1
+
+
+def test_infer_skips_ambiguous_admin_tie(caplog):
+    import logging
+    store = MagicMock()
+    repo = _make_repo("github:12", "my-org/repo-z")
+    store.query.side_effect = [
+        [repo],
+        [
+            _make_rta("github:12", "github:team:1", "admin"),
+            _make_rta("github:12", "github:team:2", "admin"),
+        ],
+    ]
+    config = _make_config(["my-org"])
+    syncer = OwnershipSyncer(config, store)
+    with caplog.at_level(logging.WARNING, logger="gitventory.ownership.sync"):
+        counts = syncer.infer_from_permissions()
+
+    store.patch.assert_not_called()
+    assert counts == {"repos_promoted": 0, "repos_ambiguous": 1, "repos_no_signal": 0}
+    assert "ambiguous" in caplog.text
+
+
+def test_infer_skips_repo_with_no_signal():
+    store = MagicMock()
+    repo = _make_repo("github:13", "my-org/repo-w")
+    store.query.side_effect = [
+        [repo],
+        [_make_rta("github:13", "github:team:5", "push")],  # push only — not enough
+    ]
+    config = _make_config(["my-org"])
+    syncer = OwnershipSyncer(config, store)
+    counts = syncer.infer_from_permissions()
+
+    store.patch.assert_not_called()
+    assert counts == {"repos_promoted": 0, "repos_ambiguous": 0, "repos_no_signal": 1}
+
+
+def test_infer_force_queries_all_repos():
+    store = MagicMock()
+    repo = _make_repo("github:14", "my-org/repo-v", owning_team_id="team:existing")
+    store.query.side_effect = [
+        [repo],  # all repos (force=True)
+        [_make_rta("github:14", "github:team:3", "admin")],
+    ]
+    config = _make_config(["my-org"])
+    syncer = OwnershipSyncer(config, store)
+    counts = syncer.infer_from_permissions(force=True)
+
+    # Verify the first query had no isnull filter (i.e., empty dict = all repos)
+    first_query_filters = store.query.call_args_list[0][0][1]
+    assert first_query_filters == {}
+    assert counts["repos_promoted"] == 1
+
+
+def test_infer_skips_already_owned_without_force():
+    store = MagicMock()
+    store.query.side_effect = [
+        [],  # no unowned repos
+    ]
+    config = _make_config(["my-org"])
+    syncer = OwnershipSyncer(config, store)
+    counts = syncer.infer_from_permissions(force=False)
+
+    store.patch.assert_not_called()
+    assert counts == {"repos_promoted": 0, "repos_ambiguous": 0, "repos_no_signal": 0}
