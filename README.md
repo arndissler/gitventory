@@ -526,6 +526,45 @@ gitventory query repos -f "open_secret_alerts>0"
 
 > **Tip:** `gitventory show repo my-org/my-repo` shows the full detail view for a single repository (all fields, no column filtering). `query repos --repo` returns the same condensed table row as a regular list query, which is easier to pipe or export as JSON.
 
+### Query repo state change history
+
+```bash
+# All tracked field changes across all repos (newest first)
+gitventory query events
+
+# Changes for a specific repo
+gitventory query events --repo my-org/my-repo
+
+# Only visibility changes in the last 30 days
+gitventory query events --field visibility --since 30
+
+# Multiple fields
+gitventory query events --field visibility --field ghas_enabled --org my-org
+
+# As JSON (for export / Grafana)
+gitventory query events --since 90 -o json
+```
+
+Tracked fields: `visibility` (public/private/internal), `is_archived`, `ghas_enabled`.  Changes are detected automatically on every `collect` run — no extra flags needed.
+
+### Query GHAS alert count trends
+
+```bash
+# Global daily alert totals (last 90 days, default)
+gitventory query alert-trend
+
+# Per-organisation aggregate
+gitventory query alert-trend --org my-org --since 180
+
+# Per-repo time series
+gitventory query alert-trend --repo my-org/my-repo
+
+# As JSON (for Grafana, spreadsheets, etc.)
+gitventory query alert-trend --org my-org -o json
+```
+
+One snapshot is written per repo per day on each `collect` run.  If collect runs multiple times a day the latest reading for that day is kept.  Per-org and global views sum counts across all repos for each date.
+
 ### Query catalog entities
 
 ```bash

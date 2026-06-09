@@ -208,3 +208,162 @@ def test_status_summary(store):
     summary = store.status_summary()
     assert summary["entity_counts"]["Repository"] == 1
     assert summary["entity_counts"]["CloudAccount"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Repo change events
+# ---------------------------------------------------------------------------
+
+def test_insert_and_query_change_events(store):
+    repo = make_repo()
+    store.upsert(repo)
+
+    events = [
+        {
+            "repo_id": "github:12345678",
+            "field": "visibility",
+            "old_value": "private",
+            "new_value": "public",
+            "observed_at": NOW,
+        }
+    ]
+    store.insert_repo_change_events(events)
+
+    rows = store.query_repo_change_events()
+    assert len(rows) == 1
+    assert rows[0]["field"] == "visibility"
+    assert rows[0]["old_value"] == "private"
+    assert rows[0]["new_value"] == "public"
+    assert rows[0]["full_name"] == "my-org/my-repo"
+
+
+def test_query_change_events_filter_by_repo(store):
+    repo_a = make_repo(id_suffix="1", full_name="my-org/repo-a")
+    repo_b = make_repo(id_suffix="2", full_name="my-org/repo-b")
+    store.upsert(repo_a)
+    store.upsert(repo_b)
+
+    store.insert_repo_change_events([
+        {"repo_id": "github:1", "field": "visibility", "old_value": "private", "new_value": "public", "observed_at": NOW},
+        {"repo_id": "github:2", "field": "is_archived", "old_value": "False", "new_value": "True", "observed_at": NOW},
+    ])
+
+    rows = store.query_repo_change_events(repo_id="my-org/repo-a")
+    assert len(rows) == 1
+    assert rows[0]["full_name"] == "my-org/repo-a"
+
+
+def test_insert_change_events_no_op_on_empty(store):
+    store.insert_repo_change_events([])
+    assert store.query_repo_change_events() == []
+
+
+# ---------------------------------------------------------------------------
+# Alert snapshots
+# ---------------------------------------------------------------------------
+
+def test_insert_and_query_alert_snapshots(store):
+    repo = make_repo()
+    store.upsert(repo)
+
+    snapshots = [{
+        "repo_id": "github:12345678",
+        "org": "my-org",
+        "observed_date": "2026-01-15",
+        "observed_at": NOW,
+        "open_secret_alerts": 3,
+        "open_code_scanning_alerts": 5,
+        "open_dependabot_alerts": 10,
+    }]
+    store.insert_alert_snapshots(snapshots)
+
+    rows = store.query_alert_snapshots(repo_id="github:12345678")
+    assert len(rows) == 1
+    assert rows[0]["open_secret_alerts"] == 3
+    assert rows[0]["scope"] == "my-org/my-repo"
+
+
+def test_alert_snapshot_upserts_same_day(store):
+    """A second snapshot on the same day replaces the first (per-day deduplication)."""
+    repo = make_repo()
+    store.upsert(repo)
+
+    base = {
+        "repo_id": "github:12345678",
+        "org": "my-org",
+        "observed_date": "2026-01-15",
+        "observed_at": NOW,
+    }
+    store.insert_alert_snapshots([{**base, "open_secret_alerts": 3, "open_code_scanning_alerts": 0, "open_dependabot_alerts": 0}])
+    store.insert_alert_snapshots([{**base, "open_secret_alerts": 1, "open_code_scanning_alerts": 2, "open_dependabot_alerts": 5}])
+
+    rows = store.query_alert_snapshots(repo_id="github:12345678")
+    assert len(rows) == 1
+    assert rows[0]["open_secret_alerts"] == 1  # updated
+    assert rows[0]["open_dependabot_alerts"] == 5
+
+
+def test_alert_snapshot_org_aggregate(store):
+    """Per-org query should SUM counts across repos for each date."""
+    repo_a = make_repo(id_suffix="1", full_name="my-org/repo-a")
+    repo_b = make_repo(id_suffix="2", full_name="my-org/repo-b")
+    store.upsert(repo_a)
+    store.upsert(repo_b)
+
+    store.insert_alert_snapshots([
+        {"repo_id": "github:1", "org": "my-org", "observed_date": "2026-01-15", "observed_at": NOW,
+         "open_secret_alerts": 2, "open_code_scanning_alerts": 0, "open_dependabot_alerts": 3},
+        {"repo_id": "github:2", "org": "my-org", "observed_date": "2026-01-15", "observed_at": NOW,
+         "open_secret_alerts": 1, "open_code_scanning_alerts": 5, "open_dependabot_alerts": 0},
+    ])
+
+    rows = store.query_alert_snapshots(org="my-org")
+    assert len(rows) == 1
+    assert rows[0]["open_secret_alerts"] == 3
+    assert rows[0]["open_code_scanning_alerts"] == 5
+    assert rows[0]["open_dependabot_alerts"] == 3
+    assert rows[0]["scope"] == "my-org"
+
+
+def test_alert_snapshot_global_aggregate(store):
+    """No repo/org filter → sum everything grouped by date."""
+    repo_a = make_repo(id_suffix="10", full_name="org-x/repo-a")
+    repo_b = make_repo(id_suffix="11", full_name="org-y/repo-b")
+    store.upsert(repo_a)
+    store.upsert(repo_b)
+
+    store.insert_alert_snapshots([
+        {"repo_id": "github:10", "org": "org-x", "observed_date": "2026-01-15", "observed_at": NOW,
+         "open_secret_alerts": 4, "open_code_scanning_alerts": 0, "open_dependabot_alerts": 0},
+        {"repo_id": "github:11", "org": "org-y", "observed_date": "2026-01-15", "observed_at": NOW,
+         "open_secret_alerts": 0, "open_code_scanning_alerts": 6, "open_dependabot_alerts": 2},
+    ])
+
+    rows = store.query_alert_snapshots()
+    assert len(rows) == 1
+    assert rows[0]["open_secret_alerts"] == 4
+    assert rows[0]["open_code_scanning_alerts"] == 6
+    assert rows[0]["open_dependabot_alerts"] == 2
+    assert rows[0]["scope"] == "all"
+
+
+def test_alert_snapshot_since_days_filter(store):
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    recent_date = now.strftime("%Y-%m-%d")
+    old_date = (now - timedelta(days=100)).strftime("%Y-%m-%d")
+
+    repo = make_repo()
+    store.upsert(repo)
+
+    store.insert_alert_snapshots([
+        {"repo_id": "github:12345678", "org": "my-org", "observed_date": old_date,
+         "observed_at": now, "open_secret_alerts": 10, "open_code_scanning_alerts": 0, "open_dependabot_alerts": 0},
+        {"repo_id": "github:12345678", "org": "my-org", "observed_date": recent_date,
+         "observed_at": now, "open_secret_alerts": 2, "open_code_scanning_alerts": 0, "open_dependabot_alerts": 0},
+    ])
+
+    rows = store.query_alert_snapshots(repo_id="github:12345678", since_days=30)
+    assert len(rows) == 1
+    assert rows[0]["open_secret_alerts"] == 2

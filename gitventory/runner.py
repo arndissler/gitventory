@@ -89,6 +89,8 @@ class CollectionRunner:
         results: dict[str, int] = {}
         github_adapter = None  # held so we can call get_collected_orgs() after the run
 
+        pre_state = self._snapshot_repo_state(repo=repo) if not dry_run else {}
+
         for name, adapter_cfg in enabled.items():
             if adapter_names and name not in adapter_names:
                 continue
@@ -150,6 +152,11 @@ class CollectionRunner:
                         name, started_at, finished_at, 0, "failed", str(exc)
                     )
                 results[name] = 0
+
+        if not dry_run:
+            run_time = datetime.now(timezone.utc)
+            self._record_repo_change_events(pre_state, run_time, repo=repo)
+            self._record_alert_snapshots(run_time, repo=repo)
 
         if not dry_run and self.config.catalog.file:
             self._run_catalog_sync()
@@ -240,3 +247,100 @@ class CollectionRunner:
                 logger.info("Stale cleanup: %d stale team assignment rows removed", total_deleted)
         except Exception as exc:
             logger.error("Stale assignment cleanup failed: %s", exc, exc_info=True)
+
+    # ------------------------------------------------------------------
+    # History helpers
+    # ------------------------------------------------------------------
+
+    _TRACKED_REPO_FIELDS = ("visibility", "is_archived", "ghas_enabled")
+
+    def _snapshot_repo_state(self, repo: Optional[str] = None) -> dict[str, dict]:
+        """Return current {repo_id: {field: value}} for tracked fields.
+
+        Used as a baseline before the collect run so we can detect changes afterward.
+        """
+        from gitventory.models.repository import Repository
+        filters: dict = {}
+        if repo:
+            filters = {"id": repo} if repo.startswith("github:") else {"full_name": repo}
+        repos = self.store.query(Repository, filters)
+        return {
+            r.id: {f: getattr(r, f) for f in self._TRACKED_REPO_FIELDS}
+            for r in repos
+        }
+
+    def _record_repo_change_events(
+        self,
+        pre_state: dict[str, dict],
+        run_time: datetime,
+        repo: Optional[str] = None,
+    ) -> int:
+        """Compare current repo state to pre_state and persist change events."""
+        from gitventory.models.repository import Repository
+        if not pre_state:
+            return 0
+        filters: dict = {}
+        if repo:
+            filters = {"id": repo} if repo.startswith("github:") else {"full_name": repo}
+        current_repos = self.store.query(Repository, filters)
+
+        events = []
+        for r in current_repos:
+            old = pre_state.get(r.id)
+            if old is None:
+                continue  # newly seen repo — skip initial-state events to avoid flood
+            for field in self._TRACKED_REPO_FIELDS:
+                old_val = old[field]
+                new_val = getattr(r, field)
+                if old_val != new_val:
+                    events.append({
+                        "repo_id": r.id,
+                        "field": field,
+                        "old_value": str(old_val) if old_val is not None else None,
+                        "new_value": str(new_val),
+                        "observed_at": run_time,
+                    })
+                    logger.info(
+                        "Repo state change: %s.%s %r → %r",
+                        r.full_name, field, old_val, new_val,
+                    )
+
+        try:
+            self.store.insert_repo_change_events(events)
+        except Exception as exc:
+            logger.error("Failed to record repo change events: %s", exc, exc_info=True)
+        return len(events)
+
+    def _record_alert_snapshots(
+        self,
+        run_time: datetime,
+        repo: Optional[str] = None,
+    ) -> int:
+        """Write one alert-count snapshot row per repo for today."""
+        from gitventory.models.repository import Repository
+        filters: dict = {}
+        if repo:
+            filters = {"id": repo} if repo.startswith("github:") else {"full_name": repo}
+        repos = self.store.query(Repository, filters)
+
+        observed_date = run_time.strftime("%Y-%m-%d")
+        snapshots = [
+            {
+                "repo_id": r.id,
+                "org": r.org or "",
+                "observed_date": observed_date,
+                "observed_at": run_time,
+                "open_secret_alerts": r.open_secret_alerts or 0,
+                "open_code_scanning_alerts": r.open_code_scanning_alerts or 0,
+                "open_dependabot_alerts": r.open_dependabot_alerts or 0,
+            }
+            for r in repos
+        ]
+
+        try:
+            self.store.insert_alert_snapshots(snapshots)
+            if snapshots:
+                logger.debug("Alert snapshots: %d repos recorded for %s", len(snapshots), observed_date)
+        except Exception as exc:
+            logger.error("Failed to record alert snapshots: %s", exc, exc_info=True)
+        return len(snapshots)

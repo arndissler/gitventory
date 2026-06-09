@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator, List, Optional, Type
 
@@ -254,6 +254,31 @@ collection_runs = Table(
     Column("error_message", Text),
 )
 
+repo_change_events = Table(
+    "repo_change_events",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("repo_id", String, nullable=False),
+    Column("field", String, nullable=False),   # 'visibility' | 'is_archived' | 'ghas_enabled'
+    Column("old_value", String),               # NULL = field first appeared
+    Column("new_value", String, nullable=False),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+)
+
+repo_alert_snapshots = Table(
+    "repo_alert_snapshots",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("repo_id", String, nullable=False),
+    Column("org", String, nullable=False),
+    Column("observed_date", String, nullable=False),   # 'YYYY-MM-DD' — one row per repo per day
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("open_secret_alerts", Integer, nullable=False),
+    Column("open_code_scanning_alerts", Integer, nullable=False),
+    Column("open_dependabot_alerts", Integer, nullable=False),
+    sa.UniqueConstraint("repo_id", "observed_date", name="uq_ras_repo_date"),
+)
+
 # Map entity type → (table, entity class)
 _TYPE_TABLE: dict[type, Table] = {
     Repository: repositories,
@@ -302,6 +327,11 @@ _INDEXES = [
     sa.Index("ix_rc_user", repo_collaborators.c.user_id),
     sa.Index("ix_tm_team", team_members.c.team_id),
     sa.Index("ix_tm_user", team_members.c.user_id),
+    sa.Index("ix_rce_repo", repo_change_events.c.repo_id),
+    sa.Index("ix_rce_observed", repo_change_events.c.observed_at),
+    sa.Index("ix_ras_repo", repo_alert_snapshots.c.repo_id),
+    sa.Index("ix_ras_org", repo_alert_snapshots.c.org),
+    sa.Index("ix_ras_date", repo_alert_snapshots.c.observed_date),
 ]
 
 
@@ -512,6 +542,149 @@ class SQLiteStore(AbstractStore):
         with self._engine.begin() as conn:
             conn.execute(catalog_memberships.delete())
         logger.debug("Cleared all catalog_memberships rows")
+
+    # ------------------------------------------------------------------
+    # History: repo change events
+    # ------------------------------------------------------------------
+
+    def insert_repo_change_events(self, events: list[dict]) -> None:
+        """Bulk-insert change event rows.  Events are append-only — never updated."""
+        if not events:
+            return
+        with self._engine.begin() as conn:
+            conn.execute(repo_change_events.insert(), events)
+
+    def query_repo_change_events(
+        self,
+        repo_id: Optional[str] = None,
+        org: Optional[str] = None,
+        field: Optional[str] = None,
+        since_days: Optional[int] = None,
+    ) -> list[dict]:
+        """Return change events, newest first.  JOINs repositories for full_name/org."""
+        stmt = (
+            sa.select(
+                repo_change_events.c.observed_at,
+                repositories.c.full_name,
+                repositories.c.org,
+                repo_change_events.c.field,
+                repo_change_events.c.old_value,
+                repo_change_events.c.new_value,
+            )
+            .join(repositories, repo_change_events.c.repo_id == repositories.c.id)
+            .order_by(repo_change_events.c.observed_at.desc())
+        )
+        if repo_id:
+            if repo_id.startswith("github:"):
+                stmt = stmt.where(repo_change_events.c.repo_id == repo_id)
+            else:
+                stmt = stmt.where(repositories.c.full_name == repo_id)
+        if org:
+            stmt = stmt.where(repositories.c.org == org)
+        if field:
+            stmt = stmt.where(repo_change_events.c.field == field)
+        if since_days is not None:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+            stmt = stmt.where(repo_change_events.c.observed_at >= cutoff)
+        with self._engine.connect() as conn:
+            rows = conn.execute(stmt).mappings().all()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # History: alert snapshots
+    # ------------------------------------------------------------------
+
+    def insert_alert_snapshots(self, snapshots: list[dict]) -> None:
+        """Upsert one alert-count snapshot per repo per day.
+
+        Uses INSERT OR REPLACE on the (repo_id, observed_date) unique constraint
+        so a second collect run on the same day updates the existing row.
+        """
+        if not snapshots:
+            return
+        with self._engine.begin() as conn:
+            for row in snapshots:
+                stmt = (
+                    sa.dialects.sqlite.insert(repo_alert_snapshots)
+                    .values(**row)
+                    .on_conflict_do_update(
+                        index_elements=["repo_id", "observed_date"],
+                        set_={
+                            "observed_at": row["observed_at"],
+                            "open_secret_alerts": row["open_secret_alerts"],
+                            "open_code_scanning_alerts": row["open_code_scanning_alerts"],
+                            "open_dependabot_alerts": row["open_dependabot_alerts"],
+                        },
+                    )
+                )
+                conn.execute(stmt)
+
+    def query_alert_snapshots(
+        self,
+        repo_id: Optional[str] = None,
+        org: Optional[str] = None,
+        since_days: Optional[int] = None,
+    ) -> list[dict]:
+        """Return alert count history as a daily time series.
+
+        Scoping:
+        - ``repo_id`` set  → per-repo rows (one per day), scope = full_name
+        - ``org`` set only → per-day rows summed across the org, scope = org
+        - neither          → per-day rows summed globally, scope = 'all'
+        """
+        s = repo_alert_snapshots
+        cutoff: Optional[datetime] = None
+        if since_days is not None:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+
+        if repo_id:
+            stmt = (
+                sa.select(
+                    s.c.observed_date.label("date"),
+                    repositories.c.full_name.label("scope"),
+                    s.c.open_secret_alerts,
+                    s.c.open_code_scanning_alerts,
+                    s.c.open_dependabot_alerts,
+                )
+                .join(repositories, s.c.repo_id == repositories.c.id)
+                .order_by(s.c.observed_date)
+            )
+            if repo_id.startswith("github:"):
+                stmt = stmt.where(s.c.repo_id == repo_id)
+            else:
+                stmt = stmt.where(repositories.c.full_name == repo_id)
+        elif org:
+            stmt = (
+                sa.select(
+                    s.c.observed_date.label("date"),
+                    s.c.org.label("scope"),
+                    sa.func.sum(s.c.open_secret_alerts).label("open_secret_alerts"),
+                    sa.func.sum(s.c.open_code_scanning_alerts).label("open_code_scanning_alerts"),
+                    sa.func.sum(s.c.open_dependabot_alerts).label("open_dependabot_alerts"),
+                )
+                .where(s.c.org == org)
+                .group_by(s.c.observed_date)
+                .order_by(s.c.observed_date)
+            )
+        else:
+            stmt = (
+                sa.select(
+                    s.c.observed_date.label("date"),
+                    sa.literal("all").label("scope"),
+                    sa.func.sum(s.c.open_secret_alerts).label("open_secret_alerts"),
+                    sa.func.sum(s.c.open_code_scanning_alerts).label("open_code_scanning_alerts"),
+                    sa.func.sum(s.c.open_dependabot_alerts).label("open_dependabot_alerts"),
+                )
+                .group_by(s.c.observed_date)
+                .order_by(s.c.observed_date)
+            )
+
+        if cutoff is not None:
+            stmt = stmt.where(s.c.observed_date >= cutoff.strftime("%Y-%m-%d"))
+
+        with self._engine.connect() as conn:
+            rows = conn.execute(stmt).mappings().all()
+        return [dict(r) for r in rows]
 
     def close(self) -> None:
         self._engine.dispose()

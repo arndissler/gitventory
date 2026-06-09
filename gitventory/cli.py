@@ -461,6 +461,138 @@ def query_mappings(
     console.print(table)
 
 
+@query.command("events")
+@click.option("--repo", default=None, help="Filter by repository full_name or stable ID.")
+@click.option("--org", default=None, help="Filter by organisation.")
+@click.option("--field", "fields", multiple=True,
+              type=click.Choice(["visibility", "is_archived", "ghas_enabled"]),
+              help="Filter by field name (repeatable).")
+@click.option("--since", "since_days", type=int, default=None, help="Limit to events in the last N days.")
+@click.option("-o", "--output", "output_fmt", default="table", type=click.Choice(["table", "json"]), show_default=True)
+@click.pass_context
+def query_events(
+    ctx: click.Context,
+    repo: Optional[str],
+    org: Optional[str],
+    fields: tuple[str, ...],
+    since_days: Optional[int],
+    output_fmt: str,
+) -> None:
+    """Show repository state change history (visibility, archived, GHAS enable/disable)."""
+    from rich.table import Table as RichTable
+
+    config = _load_config(ctx)
+    with create_store(config.store) as store:
+        rows = store.query_repo_change_events(
+            repo_id=repo,
+            org=org,
+            field=fields[0] if len(fields) == 1 else None,
+            since_days=since_days,
+        )
+        if fields and len(fields) > 1:
+            rows = [r for r in rows if r["field"] in fields]
+
+    if not rows:
+        console.print("[dim]No change events found.[/dim]")
+        return
+
+    if output_fmt == "json":
+        import json as _json
+        console.print(_json.dumps(
+            [{k: str(v) if v is not None else None for k, v in r.items()} for r in rows],
+            indent=2,
+        ))
+        return
+
+    table = RichTable(title=f"Repository State Changes ({len(rows)})")
+    table.add_column("Observed At")
+    table.add_column("Repository")
+    table.add_column("Field")
+    table.add_column("Old Value")
+    table.add_column("New Value")
+
+    _CHANGE_HIGHLIGHT = {
+        ("visibility", "public"): "[red]public[/red]",
+        ("is_archived", "True"): "[yellow]True[/yellow]",
+        ("ghas_enabled", "False"): "[red]False[/red]",
+    }
+
+    for r in rows:
+        new_val = r["new_value"]
+        display_new = _CHANGE_HIGHLIGHT.get((r["field"], new_val), new_val)
+        table.add_row(
+            str(r["observed_at"])[:19],
+            r["full_name"] or r.get("repo_id", ""),
+            r["field"],
+            r["old_value"] if r["old_value"] is not None else "[dim]—[/dim]",
+            display_new,
+        )
+    console.print(table)
+
+
+@query.command("alert-trend")
+@click.option("--repo", default=None, help="Per-repo time series (full_name or stable ID).")
+@click.option("--org", default=None, help="Per-org aggregate (sum across all repos in the org).")
+@click.option("--since", "since_days", type=int, default=90, show_default=True,
+              help="Show data for the last N days.")
+@click.option("-o", "--output", "output_fmt", default="table", type=click.Choice(["table", "json"]), show_default=True)
+@click.pass_context
+def query_alert_trend(
+    ctx: click.Context,
+    repo: Optional[str],
+    org: Optional[str],
+    since_days: int,
+    output_fmt: str,
+) -> None:
+    """Show GHAS open alert counts over time (daily snapshots).
+
+    Use --repo for per-repo time series, --org for org-level aggregates,
+    or omit both for a global aggregate across all organisations.
+    """
+    from rich.table import Table as RichTable
+
+    config = _load_config(ctx)
+    with create_store(config.store) as store:
+        rows = store.query_alert_snapshots(
+            repo_id=repo,
+            org=org,
+            since_days=since_days,
+        )
+
+    if not rows:
+        console.print("[dim]No alert snapshot data found. Run 'gitventory collect' to populate.[/dim]")
+        return
+
+    if output_fmt == "json":
+        import json as _json
+        console.print(_json.dumps(rows, indent=2, default=str))
+        return
+
+    scope_label = "Repository" if repo else ("Organisation" if org else "Scope")
+    table = RichTable(title=f"Alert Count Trend ({len(rows)} data points)")
+    table.add_column("Date")
+    table.add_column(scope_label)
+    table.add_column("Secret", justify="right")
+    table.add_column("Code Scanning", justify="right")
+    table.add_column("Dependabot", justify="right")
+    table.add_column("Total", justify="right")
+
+    for r in rows:
+        secret = r["open_secret_alerts"] or 0
+        code = r["open_code_scanning_alerts"] or 0
+        dep = r["open_dependabot_alerts"] or 0
+        total = secret + code + dep
+        table.add_row(
+            str(r["date"]),
+            str(r["scope"]),
+            f"[red]{secret}[/red]" if secret else "0",
+            f"[red]{code}[/red]" if code else "0",
+            f"[red]{dep}[/red]" if dep else "0",
+            f"[bold red]{total}[/bold red]" if total else "[dim]0[/dim]",
+        )
+    console.print(table)
+
+
 @query.command("users")
 @click.option("--team", "team_id", default=None, help="Filter by team ID (github:team:NNN or team:slug).")
 @click.option("--repo", "repo_id", default=None, help="Filter by repository ID — shows collaborators on that repo.")

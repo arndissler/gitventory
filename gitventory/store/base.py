@@ -133,6 +133,35 @@ class AbstractStore(ABC):
         )
 
     # ------------------------------------------------------------------
+    # History (optional — default no-ops for stores that don't support it)
+    # ------------------------------------------------------------------
+
+    def insert_repo_change_events(self, events: list[dict]) -> None:
+        """Record field-level change events for repositories.  Default: no-op."""
+
+    def insert_alert_snapshots(self, snapshots: list[dict]) -> None:
+        """Record open alert count snapshots per repo.  Default: no-op."""
+
+    def query_repo_change_events(
+        self,
+        repo_id: Optional[str] = None,
+        org: Optional[str] = None,
+        field: Optional[str] = None,
+        since_days: Optional[int] = None,
+    ) -> list[dict]:
+        """Return repo state change history.  Default: empty list."""
+        return []
+
+    def query_alert_snapshots(
+        self,
+        repo_id: Optional[str] = None,
+        org: Optional[str] = None,
+        since_days: Optional[int] = None,
+    ) -> list[dict]:
+        """Return alert count snapshot history.  Default: empty list."""
+        return []
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
